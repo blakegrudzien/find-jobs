@@ -283,16 +283,15 @@ TOO_EARLY_SIGNALS = [
 ]
 
 # Board size thresholds — total roles posted, before filtering.
-# The weights are deliberately small: board size conflates "small company"
-# with "few roles open right now", so it was the largest single non-title
-# lever in the score while being the least trustworthy input. Halved from
-# +12/-8 so it can nudge ordering without deciding it.
-TINY_BOARD = 5        # so few roles open the whole company is probably tiny
-SMALL_BOARD = 40      # likely a startup
-LARGE_BOARD = 200     # likely a big company
-TINY_BOARD_PENALTY = 6
-SMALL_BOARD_BONUS = 6
-LARGE_BOARD_PENALTY = 4
+# Board size no longer affects the score. It was standing in for company
+# headcount, and measured against 402 live boards it doesn't do that job:
+# the companies with <=5 open roles are netlify, dremio, motive, prisma,
+# gremlin — established firms hiring selectively, not sub-5-engineer teams.
+# The penalty was docking points for a hiring freeze. The aggregate trend is
+# real but weak (8.6% of postings on tiny boards use founding-engineer
+# language vs 1.5% on the largest), and TOO_EARLY_SIGNALS below measures the
+# same thing directly from the posting text. board_size stays in the CSV as
+# something to eyeball; it just doesn't move the ranking.
 TOO_EARLY_PENALTY = 8
 LATER_COHORT_PENALTY = 10
 
@@ -424,7 +423,7 @@ def location_ok(location):
     return not REMOTE_NON_US.search(loc)  # unspecified remote is fine
 
 
-def fit_score(title, location, body, years, crunch, board_size=0):
+def fit_score(title, location, body, years, crunch):
     """0-100ish. Higher = closer to what Blake actually wants."""
     t = title.lower()
     low = body.lower()
@@ -457,21 +456,16 @@ def fit_score(title, location, body, years, crunch, board_size=0):
         score += 4
 
     # --- mentorship ---
-    # Weighted above the old +10: having someone senior on the team to learn
-    # from is a stated requirement, not a nice-to-have.
+    # Deliberately light. Having a senior engineer to learn from matters a
+    # lot, but "mentorship" and "coaching" turn up in boilerplate benefits
+    # copy, so the phrase match is weak evidence that it's real. The company
+    # size signals below carry that judgement instead.
     if any(k in low for k in MENTOR_YOU):
-        score += 14
+        score += 8
     if any(k in low for k in MENTOR_OTHERS):
         score -= 12                      # implies they want a senior hire
 
-    # --- company size ---
-    if board_size:
-        if board_size <= TINY_BOARD:
-            score -= TINY_BOARD_PENALTY  # too small to have a team to learn from
-        elif board_size <= SMALL_BOARD:
-            score += SMALL_BOARD_BONUS   # small board -> likely a startup
-        elif board_size >= LARGE_BOARD:
-            score -= LARGE_BOARD_PENALTY  # huge board -> very competitive
+    # --- company stage, from the posting text rather than the board size ---
     if any(k in low for k in STARTUP_SIGNALS):
         score += 6
     if any(k in low for k in TOO_EARLY_SIGNALS):
@@ -511,8 +505,7 @@ def make_row(company, source, title, location, url, body, board_size=0):
         return None
     crunch = find_flags(body, CRUNCH_FLAGS)[:3]
     return {
-        "fit_score": fit_score(title, location, body, years, crunch,
-                               board_size),
+        "fit_score": fit_score(title, location, body, years, crunch),
         "company": company,
         "source": source,
         "title": title,
