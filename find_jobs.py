@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Pulls open roles from Greenhouse, Ashby, and Lever job boards.
+Pulls open roles from Greenhouse, Ashby, Lever, and Rippling job boards.
 
 Reads company slugs from plain text files so you can grow the list
 without editing this script.
@@ -8,6 +8,7 @@ without editing this script.
 Setup:
     pip install requests
     # companies_greenhouse.txt / companies_ashby.txt / companies_lever.txt
+    # companies_rippling.txt
     # one slug per line; blank lines and # comments ignored
 
 Usage:
@@ -28,11 +29,13 @@ Finding slugs — look at any job posting URL:
     job-boards.greenhouse.io/AIRBYTE/jobs/123  -> airbyte
     jobs.ashbyhq.com/CLICKHOUSE/abc            -> clickhouse
     jobs.lever.co/EXAMPLE/xyz                  -> example
+    ats.rippling.com/EXAMPLE/jobs/<uuid>       -> example
 
 Bulk-collect with Google:
     site:job-boards.greenhouse.io "data engineer" "san francisco"
     site:jobs.ashbyhq.com "new grad"
     site:jobs.lever.co "backend engineer"
+    site:ats.rippling.com "backend engineer"
 """
 
 import csv
@@ -55,6 +58,7 @@ SLUG_FILES = {
     "greenhouse": "companies_greenhouse.txt",
     "ashby": "companies_ashby.txt",
     "lever": "companies_lever.txt",
+    "rippling": "companies_rippling.txt",
 }
 
 # Boards that are not real companies. leverdemo-8 is Lever's own demo board:
@@ -770,9 +774,72 @@ def fetch_lever(slug: str, session: requests.Session) -> list:
     return rows
 
 
+RIPPLING_BOARD = "https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs"
+
+
+def _rippling_body(description) -> str:
+    """Rippling splits the posting into {"company": html, "role": html}.
+
+    Both halves are kept: "role" carries the requirements the years and
+    new-grad matching need, and "company" carries the culture copy that
+    CRUNCH_FLAGS is looking for. Falls back to treating it as a plain string
+    in case the shape changes.
+    """
+    if isinstance(description, dict):
+        return strip_html(" ".join(str(v) for v in description.values()))
+    return strip_html(description or "")
+
+
+def fetch_rippling(slug: str, session: requests.Session) -> list:
+    """Rippling is the only source that needs two requests per posting.
+
+    Its board endpoint returns just uuid/name/department/url/workLocation —
+    no body — so the description has to be fetched per job. To keep that from
+    turning one board into hundreds of GETs, the title filter runs against the
+    list first and only matching postings are fetched in full.
+
+    The location filter deliberately does NOT run against the list, even
+    though a workLocation is present there: the list carries a single location
+    while the detail carries all of them. A role listed as
+    ["Pittsburgh, PA", "Cleveland, OH"] shows only Pittsburgh in the list, so
+    pre-filtering on it would silently drop multi-city roles that include the
+    Bay Area.
+    """
+    r = session.get(RIPPLING_BOARD.format(slug=slug), timeout=25)
+    r.raise_for_status()
+    jobs = r.json()
+    board_size = len(jobs)
+    rows = []
+    for job in jobs:
+        title = job.get("name", "")
+        if not title_matches(title):
+            continue
+        detail_url = f"{RIPPLING_BOARD.format(slug=slug)}/{job.get('uuid')}"
+        d = session.get(detail_url, timeout=25)
+        if d.status_code == 404:
+            continue                     # posting pulled between the two calls
+        # any other failure is raised so scrape_one reports the board as
+        # failed. A silently-skipped posting is indistinguishable from "no
+        # matching roles", which is the exact failure this project already
+        # fixed once in scrape_one.
+        d.raise_for_status()
+        detail = d.json()
+        locations = detail.get("workLocations") or []
+        if not locations:
+            single = (job.get("workLocation") or {}).get("label", "")
+            locations = [single] if single else []
+        row = make_row(slug, "rippling", title, ", ".join(locations),
+                       job.get("url", ""),
+                       _rippling_body(detail.get("description")), board_size)
+        if row:
+            rows.append(row)
+    return rows
+
+
 FETCHERS = {"greenhouse": fetch_greenhouse,
             "ashby": fetch_ashby,
-            "lever": fetch_lever}
+            "lever": fetch_lever,
+            "rippling": fetch_rippling}
 
 
 def build_session(workers: int) -> requests.Session:

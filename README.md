@@ -2,8 +2,8 @@
 
 A job-board scraper for new-grad and early-career engineering roles. It reads a
 list of company slugs, pulls every open posting from that company's Greenhouse,
-Ashby, or Lever board, filters out anything asking for more experience than I
-have, scores what's left, and writes a ranked CSV.
+Ashby, Lever, or Rippling board, filters out anything asking for more
+experience than I have, scores what's left, and writes a ranked CSV.
 
 I built it because browsing ~40 VC portfolio company career pages by hand
 surfaced 4 relevant roles. Pointed at ~440 companies, the same afternoon's work
@@ -11,14 +11,15 @@ surfaces a few hundred, ranked, with the over-experienced ones already removed.
 
 ## How it works
 
-**Input** — three text files (`companies_greenhouse.txt`, `companies_ashby.txt`,
-`companies_lever.txt`), one company slug per line. `#` comments and blanks are
-ignored. Slugs come straight out of posting URLs:
+**Input** — four text files (`companies_greenhouse.txt`, `companies_ashby.txt`,
+`companies_lever.txt`, `companies_rippling.txt`), one company slug per line.
+`#` comments and blanks are ignored. Slugs come straight out of posting URLs:
 
 ```
 job-boards.greenhouse.io/AIRBYTE/jobs/123  -> airbyte
 jobs.ashbyhq.com/CLICKHOUSE/abc            -> clickhouse
 jobs.lever.co/EXAMPLE/xyz                  -> example
+ats.rippling.com/EXAMPLE/jobs/<uuid>       -> example
 ```
 
 I grow the lists with Google: `site:jobs.ashbyhq.com "new grad"`.
@@ -32,6 +33,15 @@ behind a login, and one run is a few hundred GETs across 12 threads.
 | Greenhouse | `boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true` |
 | Ashby | `api.ashbyhq.com/posting-api/job-board/{slug}` |
 | Lever | `api.lever.co/v0/postings/{slug}?mode=json` |
+| Rippling | `api.rippling.com/platform/api/ats/v1/board/{slug}/jobs` (+ one call per posting) |
+
+Rippling is the odd one out: its board endpoint returns no job description, so
+the body has to be fetched per posting. The title filter runs against the board
+listing first and only matching postings are fetched in full, which keeps a
+680-job board to a couple of dozen extra requests. The listing's location field
+is *not* used to pre-filter — it carries one location where the detail carries
+all of them, so filtering on it would drop multi-city roles that include the
+Bay Area.
 
 **Filtering** — a posting has to clear four gates:
 

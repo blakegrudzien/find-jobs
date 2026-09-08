@@ -1,0 +1,21 @@
+# Rippling-hosted job boards.
+#
+# Slugs come out of the posting URL the same way as the other platforms:
+#     ats.rippling.com/EXAMPLE/jobs/<uuid>  -> example
+#
+# Grow this list with:
+#     site:ats.rippling.com "backend engineer"
+#     site:ats.rippling.com "new grad"
+#     site:ats.rippling.com "san francisco"
+#
+# Note on coverage: every one of the 408 slugs already in the other three
+# files was tested against the Rippling board API and exactly one (terminal)
+# resolved. Rippling ATS adoption among the companies currently on this list
+# is close to zero, so this file is only worth what gets added to it by hand.
+
+rippling
+
+# Also listed in companies_ashby.txt, where it has more open roles. Kept here
+# because the Rippling board is live and boards move; --show-dupes will flag
+# the overlap and dedup_key collapses any JD that appears on both.
+terminal

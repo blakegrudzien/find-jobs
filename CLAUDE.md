@@ -63,7 +63,7 @@ postings on tiny boards use founding-engineer language vs 1.5% on the
 largest), and `TOO_EARLY_SIGNALS` measures the same thing directly from the
 posting text. Don't reintroduce it.
 
-## Filters (all three must pass)
+## Filters (all four must pass)
 
 1. **Title** — matches `TITLE_KEYWORDS`, and no `TITLE_DISQUALIFIERS`.
    Note `" ii"` is deliberately *not* a disqualifier: level-II roles still pass,
@@ -84,7 +84,7 @@ posting text. Don't reintroduce it.
 - The years cutoff (2) and the title keyword/disqualifier lists encode real
   decisions about what Blake will apply to.
 - `CRUNCH_FLAGS` and the crunch penalty are his own culture-screening criteria.
-- No authentication, no non-public endpoints, nothing beyond what the three
+- No authentication, no non-public endpoints, nothing beyond what the four
   platforms' public documented job-board APIs already expose.
 
 ## Bugs already found and fixed — don't reintroduce
