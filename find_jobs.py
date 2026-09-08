@@ -107,28 +107,52 @@ MONTHS = {m: i for i, m in enumerate(
     ["january", "february", "march", "april", "may", "june", "july",
      "august", "september", "october", "november", "december"], start=1)}
 
+# Job posts abbreviate as often as not ("New Grad (Dec 2026)"), so accept
+# both forms. Longest alternatives first so "january" wins over "jan", and
+# the forms are enumerated rather than using a "jan[a-z]*" wildcard, which
+# would read "maybe 2027" as May.
+_MONTH_ALTS = sorted(
+    [m for m in MONTHS] + [m[:3] + r"\.?" for m in MONTHS] + [r"sept\.?"],
+    key=len, reverse=True)
+MONTH_LOOKUP = {m[:3]: i for m, i in MONTHS.items()}
+
 # An optional month followed by a plausible year.
 DATE_PATTERN = re.compile(
-    r"\b(?:(" + "|".join(MONTHS) + r")\s+)?(20[2-9]\d)\b", re.IGNORECASE)
+    r"\b(?:(" + "|".join(_MONTH_ALTS) + r")\s+)?(20[2-9]\d)\b",
+    re.IGNORECASE)
 
 # Words that make a nearby year a graduation date rather than a copyright
 # line or a "founded in 2019".
 GRAD_CUE = re.compile(r"graduat|class of|new grad|commencement|degree by"
                       r"|diploma", re.IGNORECASE)
 
+# Some boards (Roblox) mark the cohort as a bare bracketed year at the front
+# of the title — "[2027] Software Engineer, Early Career" — with no
+# graduation wording anywhere in the posting for GRAD_CUE to catch.
+BRACKETED_YEAR = re.compile(r"^\s*\[(20[2-9]\d)\]")
+
+
+# Your own graduation, for spotting reqs aimed at a later cohort.
+GRAD_DATE = (2026, 5)                    # May 2026
+
 
 def grad_dates(text):
     """(year, month) pairs that look like a required graduation date.
 
-    A bare year is treated as June — the usual spring commencement — so
-    "class of 2027" reads as 2027-06 rather than 2027-01.
+    month is None when the text named only a year, which matters downstream:
+    "New Grad 2026" is your own cohort, while "New Grad (December 2026)" is
+    the cohort behind you.
     """
     found = []
+    lead = BRACKETED_YEAR.match(text)
+    if lead:
+        found.append((int(lead.group(1)), None))
     for m in DATE_PATTERN.finditer(text):
         window = text[max(0, m.start() - 60):m.end() + 40]
         if not GRAD_CUE.search(window):
             continue
-        month = MONTHS[m.group(1).lower()] if m.group(1) else 6
+        raw = m.group(1)
+        month = MONTH_LOOKUP[raw.lower().rstrip(".")[:3]] if raw else None
         found.append((int(m.group(2)), month))
     return found
 
@@ -142,7 +166,24 @@ def grad_year_too_far(text, today=None):
     horizon_month = today.month + GRAD_HORIZON_MONTHS
     cutoff = (today.year + (horizon_month - 1) // 12,
               (horizon_month - 1) % 12 + 1)
-    return min(dates) > cutoff
+    # a bare year reads as June, the usual spring commencement
+    return min((y, m if m is not None else 6) for y, m in dates) > cutoff
+
+
+def cohort_later_than_yours(text, grad_date=GRAD_DATE):
+    """True if the earliest cohort this posting names graduates after you.
+
+    These are still worth applying to — plenty of programs take grads from
+    the prior year — so they're penalised rather than filtered, and they
+    shouldn't outrank a role that's open to you right now.
+    """
+    dates = grad_dates(text)
+    if not dates:
+        return False
+    my_year, my_month = grad_date
+    # a bare year matching your own grad year is your cohort, not a later one
+    keys = [(y, my_month if m is None else m) for y, m in dates]
+    return min(keys) > (my_year, my_month)
 
 CRUNCH_FLAGS = [
     "60 hours", "70 hours", "80 hours", "hours per week", "hour weeks",
@@ -193,18 +234,23 @@ TITLE_NEWGRAD = [
 # The negative lookahead keeps it off "II"/"III".
 TITLE_LEVEL_ONE = re.compile(r"\bI\b(?!I)")
 
-# Titles closest to what you actually want, highest first
+# Titles closest to what you actually want, highest first.
+# Backend and data are the target; generic SWE and platform/infra sit in
+# between; customer-facing technical roles are a fallback rather than the
+# goal. Data is listed before platform so "data platform engineer" scores as
+# data rather than falling through to the platform tier.
 TITLE_PRIORITY = [
     (["data engineer", "data platform", "data infrastructure",
       "analytics engineer"], 25),
+    (["backend", "back-end", "back end"], 25),
+    (["software engineer", "platform engineer",
+      "infrastructure engineer"], 18),
     (["forward deployed", "deployed engineer", "customer engineer",
-      "solutions engineer", "solution engineer"], 22),
-    (["backend", "back-end", "back end", "platform engineer",
-      "infrastructure engineer"], 20),
-    (["software engineer"], 15),
-    (["solutions architect", "solutions consultant", "sales engineer",
-      "technical consultant", "application engineer"], 12),
-    (["support engineer", "technical support"], 8),
+      "solutions engineer", "solution engineer", "solutions architect",
+      "solutions consultant", "sales engineer", "technical consultant",
+      "application engineer", "implementation engineer",
+      "integration engineer"], 12),
+    (["support engineer", "technical support", "developer support"], 8),
 ]
 
 # "you will mentor others" implies seniority — penalize
@@ -220,12 +266,20 @@ MENTOR_YOU = [
     "supported by", "coaching",
 ]
 
-# Startup signals in the JD body
+# Startup signals worth a bonus — a real startup with a team already in place.
 STARTUP_SIGNALS = [
-    "founding", "first engineer", "early employee", "small team",
-    "employee #", "seed", "series a", "series b", "join us early",
-    "one of our first", "ground floor", "early-stage", "early stage",
+    "series a", "series b", "series c", "early-stage", "early stage",
     "wear many hats", "0 to 1", "0-to-1", "greenfield",
+]
+
+# Signals the engineering team is too small to learn from. These used to sit
+# in STARTUP_SIGNALS and earn a bonus, but "founding engineer" / "employee #7"
+# describes exactly the sub-5-engineer team where there is nobody senior to be
+# mentored by — the opposite of what you're looking for.
+TOO_EARLY_SIGNALS = [
+    "founding engineer", "founding team", "first engineer",
+    "first engineering hire", "early employee", "employee #",
+    "one of our first", "ground floor", "join us early", "pre-seed",
 ]
 
 # Board size thresholds — total roles posted, before filtering.
@@ -233,10 +287,14 @@ STARTUP_SIGNALS = [
 # with "few roles open right now", so it was the largest single non-title
 # lever in the score while being the least trustworthy input. Halved from
 # +12/-8 so it can nudge ordering without deciding it.
+TINY_BOARD = 5        # so few roles open the whole company is probably tiny
 SMALL_BOARD = 40      # likely a startup
 LARGE_BOARD = 200     # likely a big company
+TINY_BOARD_PENALTY = 6
 SMALL_BOARD_BONUS = 6
 LARGE_BOARD_PENALTY = 4
+TOO_EARLY_PENALTY = 8
+LATER_COHORT_PENALTY = 10
 
 
 def load_slugs(path):
@@ -337,6 +395,35 @@ def is_bay_area(location):
     return any(c in (location or "").lower() for c in BAY_AREA)
 
 
+# Remote postings that name only a non-US region. A remote role is worth
+# keeping because you can take it from the Bay and still get the in-office
+# benefit; a remote-Poland role can't be that, so it's dropped with the rest
+# of the non-Bay listings.
+REMOTE_NON_US = re.compile(
+    r"emea|europe|united kingdom|\buk\b|london|india|apac|canada|germany"
+    r"|france|spain|poland|portugal|brazil|australia|singapore|japan"
+    r"|israel|dublin|ireland|netherlands|lat[ao]m|mexico|argentina"
+    r"|colombia|philippines|nigeria|kenya|switzerland|sweden",
+    re.IGNORECASE,
+)
+REMOTE_US = re.compile(
+    r"\b(?:u\.?s\.?a?\.?|united states|americas|nationwide|anywhere)\b",
+    re.IGNORECASE,
+)
+
+
+def location_ok(location):
+    """Bay Area, or remote-from-the-Bay. Everything else is dropped."""
+    loc = (location or "").lower()
+    if is_bay_area(loc):
+        return True
+    if "remote" not in loc:
+        return False
+    if REMOTE_US.search(loc):
+        return True                      # "Remote (United States | Canada)"
+    return not REMOTE_NON_US.search(loc)  # unspecified remote is fine
+
+
 def fit_score(title, location, body, years, crunch, board_size=0):
     """0-100ish. Higher = closer to what Blake actually wants."""
     t = title.lower()
@@ -369,23 +456,34 @@ def fit_score(title, location, body, years, crunch, board_size=0):
     elif "remote" in (location or "").lower():
         score += 4
 
-    # --- mentorship (max 10, or penalty) ---
+    # --- mentorship ---
+    # Weighted above the old +10: having someone senior on the team to learn
+    # from is a stated requirement, not a nice-to-have.
     if any(k in low for k in MENTOR_YOU):
-        score += 10
+        score += 14
     if any(k in low for k in MENTOR_OTHERS):
         score -= 12                      # implies they want a senior hire
 
-    # --- company size (max ~18) ---
+    # --- company size ---
     if board_size:
-        if board_size <= SMALL_BOARD:
+        if board_size <= TINY_BOARD:
+            score -= TINY_BOARD_PENALTY  # too small to have a team to learn from
+        elif board_size <= SMALL_BOARD:
             score += SMALL_BOARD_BONUS   # small board -> likely a startup
         elif board_size >= LARGE_BOARD:
             score -= LARGE_BOARD_PENALTY  # huge board -> very competitive
     if any(k in low for k in STARTUP_SIGNALS):
         score += 6
+    if any(k in low for k in TOO_EARLY_SIGNALS):
+        score -= TOO_EARLY_PENALTY
 
     # --- penalties ---
-    score -= 15 * len(crunch)
+    # Crunch language is a demerit you want to see, not one that buries the
+    # posting: the crunch_flags column stays populated either way.
+    score -= 5 * len(crunch)
+
+    if cohort_later_than_yours(title + " " + body):
+        score -= LATER_COHORT_PENALTY
 
     return max(score, 0)
 
@@ -408,6 +506,8 @@ def make_row(company, source, title, location, url, body, board_size=0):
     if years > MAX_YEARS:
         return None
     if grad_year_too_far(title + " " + body):
+        return None
+    if not location_ok(location):
         return None
     crunch = find_flags(body, CRUNCH_FLAGS)[:3]
     return {
@@ -506,7 +606,7 @@ def scrape_one(source, slug, session, retries=2):
     one week and succeeds the next looks like a pile of brand-new postings.
     """
     last = "error"
-    for attempt in range(retries):
+    for _ in range(retries):
         try:
             return source, slug, FETCHERS[source](slug, session), "ok"
         except requests.HTTPError as e:
@@ -647,14 +747,14 @@ def main():
     flagged = sum(1 for r in all_rows if r["crunch_flags"])
 
     strong = sum(1 for r in all_rows if r["fit_score"] >= 60)
-    decent = sum(1 for r in all_rows if 40 <= r["fit_score"] < 60)
+    decent = sum(1 for r in all_rows if 45 <= r["fit_score"] < 60)
 
     print(f"\n{len(all_rows)} roles from {hits} companies -> {args.output}")
     print(f"  {len(new_rows)} NEW since last run -> {new_path}  <- read this one")
     if collapsed:
         print(f"  {collapsed} duplicate JDs collapsed (same role listed twice)")
     print(f"  {strong} strong fit (score 60+)  <- start here")
-    print(f"  {decent} worth a look (40-59)")
+    print(f"  {decent} worth a look (45-59)")
     print(f"  {bay} Bay Area")
     print(f"  {good} with early-career or mentorship signals")
     print(f"  {flagged} flagged for crunch language")

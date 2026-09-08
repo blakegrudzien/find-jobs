@@ -42,7 +42,11 @@ behind a login, and one run is a few hundred GETs across 12 threads.
   most 2.
 - **Graduation year** — a posting naming a class year is dropped only if the
   *earliest* date it will accept is more than 12 months out, so a winter-grad
-  req still counts but a two-cohorts-out req doesn't.
+  req still counts but a two-cohorts-out req doesn't. A posting aimed at a
+  cohort later than mine is kept but penalised, since those programs often
+  still take grads from the prior year.
+- **Location** — Bay Area, or remote from the Bay. A remote posting naming
+  only a non-US region is dropped with the rest of the non-Bay listings.
 
 **Scoring** — an additive 0–100ish heuristic over role type, new-grad language
 in the title and body, years required, Bay Area location, whether the posting
