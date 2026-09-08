@@ -15,6 +15,14 @@ Usage:
     python find_jobs.py -o jobs.csv
     python find_jobs.py --workers 16     # faster
     python find_jobs.py --prune          # comment out dead slugs in the files
+    python find_jobs.py --show-dupes     # slugs listed under >1 platform
+    python find_jobs.py --seen PATH      # where the seen-URL store lives
+    python find_jobs.py --force-seen     # update the seen store even if boards
+                                         # failed (poisons the next diff --
+                                         # see the note in main())
+    python find_jobs.py --grad-date 2026-05   # your graduation, for spotting
+                                              # reqs aimed at a later cohort
+    python find_jobs.py --verbose        # full error detail on failed boards
 
 Finding slugs — look at any job posting URL:
     job-boards.greenhouse.io/AIRBYTE/jobs/123  -> airbyte
@@ -35,7 +43,12 @@ import sys
 import html
 import datetime
 import argparse
+from collections.abc import Iterable, Sequence
+from typing import Optional
+
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 SLUG_FILES = {
@@ -112,7 +125,7 @@ MONTHS = {m: i for i, m in enumerate(
 # the forms are enumerated rather than using a "jan[a-z]*" wildcard, which
 # would read "maybe 2027" as May.
 _MONTH_ALTS = sorted(
-    [m for m in MONTHS] + [m[:3] + r"\.?" for m in MONTHS] + [r"sept\.?"],
+    list(MONTHS) + [m[:3] + r"\.?" for m in MONTHS] + [r"sept\.?"],
     key=len, reverse=True)
 MONTH_LOOKUP = {m[:3]: i for m, i in MONTHS.items()}
 
@@ -133,10 +146,15 @@ BRACKETED_YEAR = re.compile(r"^\s*\[(20[2-9]\d)\]")
 
 
 # Your own graduation, for spotting reqs aimed at a later cohort.
+# This is a constant whose MEANING drifts with the calendar rather than one
+# that goes stale loudly, so it is overridable from the command line
+# (--grad-date YYYY-MM) instead of being buried here. Revisit whenever the
+# target cohort changes; a wrong value here quietly mis-penalises every
+# class-year posting in the run.
 GRAD_DATE = (2026, 5)                    # May 2026
 
 
-def grad_dates(text):
+def grad_dates(text: str) -> list:
     """(year, month) pairs that look like a required graduation date.
 
     month is None when the text named only a year, which matters downstream:
@@ -157,7 +175,8 @@ def grad_dates(text):
     return found
 
 
-def grad_year_too_far(text, today=None):
+def grad_year_too_far(text: str,
+                      today: Optional[datetime.date] = None) -> bool:
     """True if every graduation date named is beyond the horizon."""
     dates = grad_dates(text)
     if not dates:
@@ -170,13 +189,18 @@ def grad_year_too_far(text, today=None):
     return min((y, m if m is not None else 6) for y, m in dates) > cutoff
 
 
-def cohort_later_than_yours(text, grad_date=GRAD_DATE):
+def cohort_later_than_yours(text: str,
+                            grad_date: Optional[tuple] = None) -> bool:
     """True if the earliest cohort this posting names graduates after you.
 
     These are still worth applying to — plenty of programs take grads from
     the prior year — so they're penalised rather than filtered, and they
     shouldn't outrank a role that's open to you right now.
+
+    Defaults to None rather than to GRAD_DATE directly: a default argument is
+    bound once at import, so --grad-date would have been silently ignored.
     """
+    grad_date = grad_date or GRAD_DATE
     dates = grad_dates(text)
     if not dates:
         return False
@@ -248,10 +272,34 @@ TITLE_PRIORITY = [
     (["forward deployed", "deployed engineer", "customer engineer",
       "solutions engineer", "solution engineer", "solutions architect",
       "solutions consultant", "sales engineer", "technical consultant",
-      "application engineer", "implementation engineer",
+      "application engineer", "field application", "implementation engineer",
       "integration engineer"], 12),
     (["support engineer", "technical support", "developer support"], 8),
 ]
+
+# TITLE_KEYWORDS gates the filter; TITLE_PRIORITY assigns the role-type points.
+# They are two lists that have to agree, and nothing checked that they did.
+# The failure mode is silent and expensive in exactly one direction: a keyword
+# that passes the filter but matches no tier scores 0 for role type, so those
+# postings sink to the bottom of a list that is read top-down — you would never
+# see them and never know they were mis-scored.
+#
+# "field application" was in that state. It happened to score anyway, because a
+# real title ("Field Application Engineer") also contains "application
+# engineer" — correct by coincidence of English, not by construction. It is now
+# an explicit tier entry, which changes no score and makes the invariant hold.
+#
+# The reverse direction (a tier phrase absent from TITLE_KEYWORDS, currently
+# "data platform" and "data infrastructure") is harmless: those titles already
+# pass the filter via "platform engineer" / "infrastructure engineer". Adding
+# them to TITLE_KEYWORDS would WIDEN the filter, which is a targeting decision,
+# not a cleanup — so it is deliberately not done here.
+_UNTIERED = [k for k in TITLE_KEYWORDS
+             if not any(p in k or k in p
+                        for tier, _ in TITLE_PRIORITY for p in tier)]
+assert not _UNTIERED, (
+    f"TITLE_KEYWORDS entries with no TITLE_PRIORITY tier (they would pass the "
+    f"filter and score 0 for role type): {_UNTIERED}")
 
 # "you will mentor others" implies seniority — penalize
 MENTOR_OTHERS = [
@@ -259,11 +307,15 @@ MENTOR_OTHERS = [
     "mentoring other", "mentor engineers", "raise the bar", "mentor peers",
 ]
 
-# "you will be mentored" — what you actually want
+# "you will be mentored" — what you actually want.
+# "supported by" and "with guidance" used to be in this list and were removed:
+# they are not boilerplate-adjacent, they ARE boilerplate. "backed and
+# supported by Sequoia" is an investor sentence and appears in a large share of
+# startup JDs, so the phrase was handing out the mentorship bonus for nothing.
+# What is left has to actually name the mentoring relationship.
 MENTOR_YOU = [
     "mentorship", "you'll be mentored", "learn from experienced",
-    "dedicated mentor", "guidance from senior", "with guidance",
-    "supported by", "coaching",
+    "dedicated mentor", "guidance from senior", "coaching",
 ]
 
 # Startup signals worth a bonus — a real startup with a team already in place.
@@ -292,11 +344,52 @@ TOO_EARLY_SIGNALS = [
 # language vs 1.5% on the largest), and TOO_EARLY_SIGNALS below measures the
 # same thing directly from the posting text. board_size stays in the CSV as
 # something to eyeball; it just doesn't move the ranking.
+# --- scoring weights -------------------------------------------------------
+# These values were set deliberately in a calibration interview and the
+# rationale for each is written up in CLAUDE.md. They are named here rather
+# than inlined into fit_score so that the score is auditable in one place and
+# a recalibration shows up as a one-line diff instead of a change buried in an
+# expression. NO VALUE HERE HAS BEEN CHANGED from the inlined version — this
+# is a move, not a retune.
+W_NEWGRAD_TITLE = 20        # new-grad language in the title
+W_NEWGRAD_BODY_PER_HIT = 6  # per distinct EXPLICIT_NEWGRAD phrase in the body
+W_NEWGRAD_BODY_CAP = 18
+W_YEARS_UNSTATED = 10       # usually fine, but more ambiguous than a stated 1
+W_YEARS_ONE = 15            # an explicit 1 means they set the level low
+W_YEARS_TWO = 6
+W_BAY_AREA = 15
+W_REMOTE = 4
+W_MENTOR_YOU = 8            # deliberately light; the phrases are weak evidence
+W_MENTOR_OTHERS = -12       # implies they want a senior hire
+W_STARTUP = 6
+
 TOO_EARLY_PENALTY = 8
 LATER_COHORT_PENALTY = 10
 
+# Crunch language is "-5 each", but only up to a point: it is a demerit Blake
+# wants to SEE, not one that buries an otherwise-good posting. The cap used to
+# be an accident — make_row sliced the flag list to [:3] so the CSV column
+# stayed readable, and fit_score happened to score that same truncated list.
+# Display width silently set the penalty ceiling. Both are explicit now, and
+# the CSV records every flag found so the cap can actually be audited.
+CRUNCH_PENALTY_EACH = 5
+CRUNCH_PENALTY_MAX_FLAGS = 3
 
-def load_slugs(path):
+# Summary buckets. These have NOT been re-decided since board size was removed
+# from scoring, which compressed the distribution (strong 29 -> 21, worth a
+# look 132 -> 91 on the same input). Named here so a recalibration is a
+# one-line change; see the open item in HANDOFF.md.
+STRONG_FIT = 60
+WORTH_A_LOOK = 45
+
+# CSV column order. board_size is reported but deliberately NOT scored — see
+# the note above TOO_EARLY_PENALTY and the write-up in CLAUDE.md.
+CSV_FIELDS = ["fit_score", "company", "source", "title", "location",
+              "bay_area", "board_size", "years_stated", "good_signals",
+              "crunch_flags", "url"]
+
+
+def load_slugs(path: str) -> list:
     if not os.path.exists(path):
         return []
     slugs = []
@@ -308,7 +401,7 @@ def load_slugs(path):
     return sorted(set(slugs))
 
 
-def load_seen(path):
+def load_seen(path: str) -> dict:
     """URLs already reported as new by a previous run."""
     if not os.path.exists(path):
         return {}
@@ -321,14 +414,31 @@ def load_seen(path):
         return {}
 
 
-def save_seen(path, seen):
+def atomic_write(path: str, write_fn) -> None:
+    """Write via a temp file and rename, so a crash can't truncate the target.
+
+    Both callers need this and only one used to have it: seen_urls.json was
+    protected while the slug files — the hand-curated input, months of Google
+    site: searches, and the only record of which slugs are dead — were
+    rewritten in place with a bare open(path, "w").
+    """
     tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"urls": seen}, f, indent=0, sort_keys=True)
-    os.replace(tmp, path)               # atomic, so a crash can't truncate it
+    try:
+        with open(tmp, "w", newline="", encoding="utf-8") as f:
+            write_fn(f)
+        os.replace(tmp, path)           # atomic on POSIX
+    except BaseException:
+        if os.path.exists(tmp):
+            os.remove(tmp)              # don't leave a partial .tmp behind
+        raise
 
 
-def prune_file(path, dead_slugs):
+def save_seen(path: str, seen: dict) -> None:
+    atomic_write(path, lambda f: json.dump({"urls": seen}, f, indent=0,
+                                           sort_keys=True))
+
+
+def prune_file(path: str, dead_slugs: Iterable[str]) -> None:
     """Comment out newly-dead slugs, rewriting the file line by line.
 
     This used to rebuild the file from load_slugs(), which strips comments —
@@ -338,7 +448,8 @@ def prune_file(path, dead_slugs):
     dead_slugs = set(dead_slugs)
     with open(path, encoding="utf-8") as f:
         lines = f.readlines()
-    with open(path, "w", encoding="utf-8") as f:
+
+    def write(f):
         for line in lines:
             slug = line.split("#")[0].strip().lower()
             if slug and slug in dead_slugs:
@@ -346,8 +457,10 @@ def prune_file(path, dead_slugs):
             else:
                 f.write(line if line.endswith("\n") else line + "\n")
 
+    atomic_write(path, write)
 
-def strip_html(text):
+
+def strip_html(text: Optional[str]) -> str:
     # Unescape first, then strip tags. Greenhouse serves its job body
     # HTML-escaped (&lt;p&gt;), so stripping first left literal "<p>" and
     # "<span class=...>" sitting in the text the keyword matching reads.
@@ -358,21 +471,34 @@ def strip_html(text):
     return re.sub(r"\s+", " ", text).strip()
 
 
-def title_matches(title):
+def title_matches(title: str) -> bool:
     t = " " + title.lower() + " "
     if not any(k in t for k in TITLE_KEYWORDS):
         return False
     return not any(d in t for d in TITLE_DISQUALIFIERS)
 
 
-def max_years_required(body):
-    """Highest years-of-experience the posting asks for, 0 if unstated.
+def years_required(body: str) -> tuple:
+    """(floor, ceiling) years-of-experience the posting asks for.
 
-    For a range ("1-3 years") this returns the TOP of the range. The old code
-    returned the bottom, so a 1-3 year role read as "1 year" — it survived the
-    MAX_YEARS filter and then collected the largest years bonus in fit_score.
+    A range carries two different facts and they are used for two different
+    things, so both are returned:
+
+      - the CEILING is what the filter screens on. For "1-3 years" that is 3,
+        because a 1-3 year req is a 3-year req you might squeak into. The old
+        code screened on the bottom of the range, so those roles survived
+        MAX_YEARS and then collected the largest years bonus in fit_score.
+
+      - the FLOOR is what the score should reward. "0-2 years" means they are
+        open to someone with none, which is a stronger new-grad signal than
+        "1 year" — but scoring it on the ceiling ranked it as if they had
+        demanded two full years, 9 points below an explicit "1 year". That
+        inverted the ordering at the top of the list, which is the only part
+        of the list that gets read.
+
+    Both are 0 when the posting states nothing.
     """
-    highest = 0
+    floor, ceiling = 0, 0
     body = DEGREE_PATTERN.sub(" ", body)
     for m in YEARS_PATTERN.finditer(body):
         try:
@@ -380,17 +506,41 @@ def max_years_required(body):
             high = int(m.group(2)) if m.group(2) else low
         except ValueError:
             continue
-        if high <= 20:
-            highest = max(highest, high)
-    return highest
+        if high <= 20 and high >= ceiling:
+            # track the floor belonging to the most demanding requirement,
+            # so "0-2 years ... 2+ years" screens and scores off the same one
+            ceiling, floor = high, low
+    return floor, ceiling
 
 
-def find_flags(body, flags):
-    low = body.lower()
-    return [f for f in flags if f in low]
+def max_years_required(body: str) -> int:
+    """Ceiling only — what the MAX_YEARS filter screens on.
+
+    Kept as a named function because it is the filter's contract and reads
+    better at the call site than years_required(body)[1].
+    """
+    return years_required(body)[1]
 
 
-def is_bay_area(location):
+def find_flags(body: str, flags: Sequence[str]) -> list:
+    """Phrases from `flags` present in `body`, without double-counting.
+
+    A shorter phrase that is contained in a longer matched phrase is dropped:
+    "new graduate" in a body also contains "new grad", and counting both meant
+    one phrase scored twice (12 of the 18-point body cap) and burned two of the
+    four good_signals display slots. This is the same class of mistake as the
+    bare " i" substring bug — an unvalidated substring relationship inside a
+    keyword list — so it is fixed once, here, for every list that uses it.
+
+    Order follows the caller's list so the columns stay stable.
+    """
+    low = (body or "").lower()
+    hits = [f for f in flags if f in low]
+    return [f for f in hits
+            if not any(f != other and f in other for other in hits)]
+
+
+def is_bay_area(location: Optional[str]) -> bool:
     return any(c in (location or "").lower() for c in BAY_AREA)
 
 
@@ -411,7 +561,7 @@ REMOTE_US = re.compile(
 )
 
 
-def location_ok(location):
+def location_ok(location: Optional[str]) -> bool:
     """Bay Area, or remote-from-the-Bay. Everything else is dropped."""
     loc = (location or "").lower()
     if is_bay_area(loc):
@@ -423,8 +573,14 @@ def location_ok(location):
     return not REMOTE_NON_US.search(loc)  # unspecified remote is fine
 
 
-def fit_score(title, location, body, years, crunch):
-    """0-100ish. Higher = closer to what Blake actually wants."""
+def fit_score(title: str, location: str, body: str, years_floor: int,
+              crunch: Sequence[str], grad_date: Optional[tuple] = None) -> int:
+    """0-100ish. Higher = closer to what Blake actually wants.
+
+    `years_floor` is the BOTTOM of the stated range (see years_required); the
+    filter has already screened on the top. `crunch` is the full list of
+    matched flags — the penalty cap is applied here, not by the caller.
+    """
     t = title.lower()
     low = body.lower()
     score = 0
@@ -437,52 +593,51 @@ def fit_score(title, location, body, years, crunch):
 
     # --- level signals (max ~35) ---
     if any(k in t for k in TITLE_NEWGRAD) or TITLE_LEVEL_ONE.search(title):
-        score += 20                      # new-grad language in the title
-    hits = sum(1 for k in EXPLICIT_NEWGRAD if k in low)
-    score += min(hits * 6, 18)           # new-grad language in the body
+        score += W_NEWGRAD_TITLE
+    hits = len(find_flags(body, EXPLICIT_NEWGRAD))
+    score += min(hits * W_NEWGRAD_BODY_PER_HIT, W_NEWGRAD_BODY_CAP)
 
     # --- years (max 15) ---
-    if years == 0:
-        score += 10                      # unstated is usually fine
-    elif years == 1:
-        score += 15
-    elif years == 2:
-        score += 6
+    if years_floor == 0:
+        score += W_YEARS_UNSTATED        # unstated, or an explicit "0-N"
+    elif years_floor == 1:
+        score += W_YEARS_ONE
+    elif years_floor == 2:
+        score += W_YEARS_TWO
 
     # --- location (max 15) ---
     if is_bay_area(location):
-        score += 15
+        score += W_BAY_AREA
     elif "remote" in (location or "").lower():
-        score += 4
+        score += W_REMOTE
 
     # --- mentorship ---
     # Deliberately light. Having a senior engineer to learn from matters a
     # lot, but "mentorship" and "coaching" turn up in boilerplate benefits
-    # copy, so the phrase match is weak evidence that it's real. The company
-    # size signals below carry that judgement instead.
+    # copy, so the phrase match is weak evidence that it's real. The
+    # TOO_EARLY_SIGNALS penalty below is the load-bearing test for "is there
+    # anyone here to learn from"; this is only corroboration.
     if any(k in low for k in MENTOR_YOU):
-        score += 8
+        score += W_MENTOR_YOU
     if any(k in low for k in MENTOR_OTHERS):
-        score -= 12                      # implies they want a senior hire
+        score += W_MENTOR_OTHERS         # implies they want a senior hire
 
     # --- company stage, from the posting text rather than the board size ---
     if any(k in low for k in STARTUP_SIGNALS):
-        score += 6
+        score += W_STARTUP
     if any(k in low for k in TOO_EARLY_SIGNALS):
         score -= TOO_EARLY_PENALTY
 
     # --- penalties ---
-    # Crunch language is a demerit you want to see, not one that buries the
-    # posting: the crunch_flags column stays populated either way.
-    score -= 5 * len(crunch)
+    score -= CRUNCH_PENALTY_EACH * min(len(crunch), CRUNCH_PENALTY_MAX_FLAGS)
 
-    if cohort_later_than_yours(title + " " + body):
+    if cohort_later_than_yours(title + " " + body, grad_date):
         score -= LATER_COHORT_PENALTY
 
     return max(score, 0)
 
 
-def dedup_key(company, title, location):
+def dedup_key(company: str, title: str, location: str) -> tuple:
     """Identifies the same JD listed twice.
 
     30 slugs currently sit in two slug files, so a company listed on both
@@ -491,35 +646,43 @@ def dedup_key(company, title, location):
     location rather than company alone, so a company with four genuinely
     different open roles still produces four rows.
     """
-    norm = lambda s: re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+    def norm(s):                         # PEP 8 E731: def, not an assigned lambda
+        return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+
     return norm(company), norm(title), norm(location)
 
 
-def make_row(company, source, title, location, url, body, board_size=0):
-    years = max_years_required(body)
-    if years > MAX_YEARS:
+def make_row(company: str, source: str, title: str, location: str, url: str,
+             body: str, board_size: int = 0,
+             grad_date: Optional[tuple] = None) -> Optional[dict]:
+    years_floor, years_ceiling = years_required(body)
+    if years_ceiling > MAX_YEARS:
         return None
     if grad_year_too_far(title + " " + body):
         return None
     if not location_ok(location):
         return None
-    crunch = find_flags(body, CRUNCH_FLAGS)[:3]
+    # Every flag, not a display-truncated subset: fit_score applies its own
+    # cap, and the column is Blake's culture screen — truncating it destroyed
+    # the only evidence that would show whether the cap was ever binding.
+    crunch = find_flags(body, CRUNCH_FLAGS)
     return {
-        "fit_score": fit_score(title, location, body, years, crunch),
+        "fit_score": fit_score(title, location, body, years_floor, crunch,
+                               grad_date),
         "company": company,
         "source": source,
         "title": title,
         "location": location,
         "bay_area": "yes" if is_bay_area(location) else "",
         "board_size": board_size or "",
-        "years_stated": years or "",
+        "years_stated": years_ceiling or "",
         "good_signals": ", ".join(find_flags(body, GOOD_FLAGS)[:4]),
         "crunch_flags": ", ".join(crunch),
         "url": url,
     }
 
 
-def fetch_greenhouse(slug, session):
+def fetch_greenhouse(slug: str, session: requests.Session) -> list:
     r = session.get(
         f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true",
         timeout=25)
@@ -540,7 +703,7 @@ def fetch_greenhouse(slug, session):
     return rows
 
 
-def fetch_ashby(slug, session):
+def fetch_ashby(slug: str, session: requests.Session) -> list:
     r = session.get(
         f"https://api.ashbyhq.com/posting-api/job-board/{slug}"
         f"?includeCompensation=true", timeout=25)
@@ -562,7 +725,7 @@ def fetch_ashby(slug, session):
     return rows
 
 
-def fetch_lever(slug, session):
+def fetch_lever(slug: str, session: requests.Session) -> list:
     r = session.get(f"https://api.lever.co/v0/postings/{slug}?mode=json",
                     timeout=25)
     r.raise_for_status()
@@ -590,32 +753,70 @@ FETCHERS = {"greenhouse": fetch_greenhouse,
             "lever": fetch_lever}
 
 
-def scrape_one(source, slug, session, retries=2):
-    """Fetch one board. Retries once on a transient failure.
+def build_session(workers: int) -> requests.Session:
+    """A session sized for the pool, with real backoff on transient failures.
+
+    Two things this fixes:
+
+      - the default urllib3 connection pool holds 10 connections. Running 12
+        workers against it meant connections were discarded and reopened under
+        load, for no reason other than an unset parameter.
+
+      - retries used to be a bare `for _ in range(2)` with no delay, so a 429
+        (rate limited) was retried instantly. That is the one status code where
+        an immediate retry is guaranteed to be counterproductive. Retry gives
+        exponential backoff and honours Retry-After.
+
+    404 is deliberately NOT in status_forcelist: a dead slug is a normal,
+    expected result that scrape_one classifies, not a transient failure.
+    """
+    session = requests.Session()
+    session.headers["User-Agent"] = "Mozilla/5.0 (job search)"
+    retry = Retry(
+        total=2,
+        backoff_factor=0.5,              # 0.5s, 1.0s between attempts
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=("GET",),
+        respect_retry_after_header=True,
+        raise_on_status=False,           # let raise_for_status() classify
+    )
+    adapter = HTTPAdapter(max_retries=retry,
+                          pool_maxsize=max(workers, 10),
+                          pool_connections=max(workers, 10))
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+def scrape_one(source: str, slug: str, session: requests.Session) -> tuple:
+    """Fetch one board and classify the outcome.
+
+    Transient retries happen inside the session adapter (see build_session),
+    so this is a single logical attempt.
 
     A board that times out returns no rows, which is indistinguishable from a
     board with no matching roles — so failures are counted and reported rather
     than swallowed. That matters for the run-to-run diff: a company that fails
     one week and succeeds the next looks like a pile of brand-new postings.
     """
-    last = "error"
-    for _ in range(retries):
-        try:
-            return source, slug, FETCHERS[source](slug, session), "ok"
-        except requests.HTTPError as e:
-            code = e.response.status_code if e.response is not None else 0
-            if code == 404:
-                return source, slug, [], "404"
-            last = f"http{code}"
-            if code < 500 and code != 429:
-                break                    # not worth retrying a 4xx
-        except Exception as e:
-            last = type(e).__name__
-    return source, slug, [], last
+    try:
+        return source, slug, FETCHERS[source](slug, session), "ok"
+    except requests.HTTPError as e:
+        code = e.response.status_code if e.response is not None else 0
+        if code == 404:
+            return source, slug, [], "404"
+        return source, slug, [], f"http{code}"
+    except Exception as e:
+        # keep the message, not just the class: when a board fails it
+        # suppresses the seen-store update and invalidates the diff, which is
+        # exactly when you want to know *why* rather than just "ConnectionError"
+        return source, slug, [], f"{type(e).__name__}: {e}"
 
 
-def main():
-    ap = argparse.ArgumentParser()
+def parse_args(argv=None) -> argparse.Namespace:
+    ap = argparse.ArgumentParser(
+        description="Rank open new-grad/early-career engineering roles from "
+                    "Greenhouse, Ashby and Lever public job-board APIs.")
     ap.add_argument("-o", "--output", default="jobs.csv")
     ap.add_argument("--workers", type=int, default=12)
     ap.add_argument("--prune", action="store_true",
@@ -625,98 +826,112 @@ def main():
     ap.add_argument("--seen", default="seen_urls.json",
                     help="store of URLs already reported (for the _new.csv)")
     ap.add_argument("--force-seen", action="store_true",
-                    help="update the seen store even if boards failed")
-    args = ap.parse_args()
+                    help="update the seen store even if boards failed; this "
+                         "poisons the next run's diff, so prefer re-running")
+    ap.add_argument("--grad-date", metavar="YYYY-MM",
+                    help=f"your graduation, for spotting reqs aimed at a later "
+                         f"cohort (default "
+                         f"{GRAD_DATE[0]}-{GRAD_DATE[1]:02d})")
+    ap.add_argument("--verbose", action="store_true",
+                    help="print full error detail for every failed board")
+    return ap.parse_args(argv)
 
-    tasks = []
-    by_source = {}
+
+def parse_grad_date(text: str) -> tuple:
+    """'YYYY-MM' -> (year, month). Raises SystemExit on malformed input."""
+    m = re.fullmatch(r"(20\d{2})-(0[1-9]|1[0-2])", (text or "").strip())
+    if not m:
+        raise SystemExit(f"--grad-date must look like 2026-05, got {text!r}")
+    return int(m.group(1)), int(m.group(2))
+
+
+def collect_tasks() -> tuple:
+    """(tasks, slugs_by_source) from the three slug files."""
+    tasks, by_source = [], {}
     for source, path in SLUG_FILES.items():
         slugs = load_slugs(path)
         if not slugs:
             print(f"note: {path} missing or empty", file=sys.stderr)
         by_source[source] = set(slugs)
         tasks += [(source, s) for s in slugs]
+    return tasks, by_source
 
-    if not tasks:
-        print("No slugs found. Create the companies_*.txt files first.")
-        return
 
-    # A company lives on one platform, so a slug in two files is a mistake in
-    # one of them. Harmless when the wrong one 404s, but when both resolve you
-    # get the same company twice under two different URLs, which the
-    # run-to-run URL diff can't collapse.
+def find_cross_file_dupes(by_source: dict) -> set:
+    """Slugs listed under more than one platform.
+
+    A company lives on one platform, so a slug in two files is a mistake in
+    one of them. Harmless when the wrong one 404s, but when both resolve you
+    get the same company twice under two different URLs, which the run-to-run
+    URL diff can't collapse.
+    """
     dupes = set()
     sources = list(by_source)
     for i, a in enumerate(sources):
         for b in sources[i + 1:]:
             for slug in by_source[a] & by_source[b]:
                 dupes.add((slug, a, b))
-    if dupes:
-        print(f"note: {len(dupes)} slugs appear in more than one slug file "
-              f"(run --show-dupes to list them)", file=sys.stderr)
+    return dupes
 
-    print(f"Checking {len(tasks)} boards...\n")
 
-    all_rows = []
-    dead = {"greenhouse": [], "ashby": [], "lever": []}
+def run_scrape(tasks: Sequence[tuple], workers: int) -> tuple:
+    """Fetch every board concurrently. -> (rows, dead_by_source, failed, hits)"""
+    rows = []
+    dead = {source: [] for source in SLUG_FILES}
     failed = []
     hits = 0
 
-    session = requests.Session()
-    session.headers["User-Agent"] = "Mozilla/5.0 (job search)"
-
-    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+    session = build_session(workers)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [pool.submit(scrape_one, s, g, session) for s, g in tasks]
         for fut in as_completed(futures):
-            source, slug, rows, status = fut.result()
+            source, slug, got, status = fut.result()
             if status == "ok":
-                all_rows.extend(rows)
-                if rows:
+                rows.extend(got)
+                if got:
                     hits += 1
-                    print(f"  {slug} ({source}): {len(rows)}")
+                    print(f"  {slug} ({source}): {len(got)}")
             elif status == "404":
                 dead[source].append(slug)
             else:
                 failed.append((source, slug, status))
+    return rows, dead, failed, hits
 
-    if args.prune:
-        for source, path in SLUG_FILES.items():
-            if not dead[source] or not os.path.exists(path):
-                continue
-            prune_file(path, dead[source])
-            print(f"pruned {len(dead[source])} dead slugs from {path}")
 
-    all_rows.sort(key=lambda r: (-r["fit_score"], r["company"], r["title"]))
+def rank_and_dedup(rows: list) -> tuple:
+    """Sort by fit, then collapse the same JD listed twice. -> (rows, n_collapsed)
 
-    # Collapse the same JD listed twice (usually a slug sitting in two slug
-    # files). Sorted by score first, so the copy we keep is the better-scoring
-    # one; different roles at the same company keep their own rows.
+    Sorted by score first, so the copy kept is the better-scoring one;
+    different roles at the same company keep their own rows.
+    """
+    rows.sort(key=lambda r: (-r["fit_score"], r["company"], r["title"]))
     seen_jd, deduped = set(), []
-    for r in all_rows:
+    for r in rows:
         key = dedup_key(r["company"], r["title"], r["location"])
         if key in seen_jd:
             continue
         seen_jd.add(key)
         deduped.append(r)
-    collapsed = len(all_rows) - len(deduped)
-    all_rows = deduped
+    return deduped, len(rows) - len(deduped)
 
-    fields = ["fit_score", "company", "source", "title", "location",
-              "bay_area", "board_size", "years_stated", "good_signals",
-              "crunch_flags", "url"]
 
-    def write_csv(path, rows):
-        with open(path, "w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=fields)
-            w.writeheader()
-            w.writerows(rows)
+def write_csv(path: str, rows: Sequence[dict]) -> None:
+    def write(f):
+        w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+        w.writeheader()
+        w.writerows(rows)
 
-    write_csv(args.output, all_rows)
+    atomic_write(path, write)
 
-    # --- what's actually new since last run --------------------------------
-    seen = load_seen(args.seen)
-    new_rows = [r for r in all_rows if r["url"] not in seen]
-    base, ext = os.path.splitext(args.output)
+
+def write_outputs(rows: list, output: str, seen_path: str, failed: list,
+                  force_seen: bool) -> tuple:
+    """Write the ranked CSV and the net-new CSV. -> (new_rows, new_path)"""
+    write_csv(output, rows)
+
+    seen = load_seen(seen_path)
+    new_rows = [r for r in rows if r["url"] not in seen]
+    base, ext = os.path.splitext(output)
     new_path = f"{base}_new{ext or '.csv'}"
     write_csv(new_path, new_rows)
 
@@ -724,30 +939,34 @@ def main():
     # as "seen" would be fine, but NOT recording them matters: if we marked
     # this run complete, every posting from a board that failed today would
     # surface as brand new the moment it succeeds again.
-    today = datetime.date.today().isoformat()
-    if failed and not args.force_seen:
-        print(f"\nNOT updating {args.seen}: {len(failed)} boards failed this "
+    if failed and not force_seen:
+        print(f"\nNOT updating {seen_path}: {len(failed)} boards failed this "
               f"run, so it would poison the next diff. Re-run, or pass "
               f"--force-seen to record it anyway.")
     else:
-        for r in all_rows:
+        today = datetime.date.today().isoformat()
+        for r in rows:
             seen.setdefault(r["url"], today)
-        save_seen(args.seen, seen)
+        save_seen(seen_path, seen)
+    return new_rows, new_path
 
+
+def print_summary(rows: list, new_rows: list, new_path: str, output: str,
+                  hits: int, collapsed: int, dead: dict, failed: list,
+                  dupes: set, args: argparse.Namespace) -> None:
     total_dead = sum(len(v) for v in dead.values())
-    bay = sum(1 for r in all_rows if r["bay_area"] == "yes")
-    good = sum(1 for r in all_rows if r["good_signals"])
-    flagged = sum(1 for r in all_rows if r["crunch_flags"])
+    bay = sum(1 for r in rows if r["bay_area"] == "yes")
+    good = sum(1 for r in rows if r["good_signals"])
+    flagged = sum(1 for r in rows if r["crunch_flags"])
+    strong = sum(1 for r in rows if r["fit_score"] >= STRONG_FIT)
+    decent = sum(1 for r in rows if WORTH_A_LOOK <= r["fit_score"] < STRONG_FIT)
 
-    strong = sum(1 for r in all_rows if r["fit_score"] >= 60)
-    decent = sum(1 for r in all_rows if 45 <= r["fit_score"] < 60)
-
-    print(f"\n{len(all_rows)} roles from {hits} companies -> {args.output}")
+    print(f"\n{len(rows)} roles from {hits} companies -> {output}")
     print(f"  {len(new_rows)} NEW since last run -> {new_path}  <- read this one")
     if collapsed:
         print(f"  {collapsed} duplicate JDs collapsed (same role listed twice)")
-    print(f"  {strong} strong fit (score 60+)  <- start here")
-    print(f"  {decent} worth a look (45-59)")
+    print(f"  {strong} strong fit (score {STRONG_FIT}+)  <- start here")
+    print(f"  {decent} worth a look ({WORTH_A_LOOK}-{STRONG_FIT - 1})")
     print(f"  {bay} Bay Area")
     print(f"  {good} with early-career or mentorship signals")
     print(f"  {flagged} flagged for crunch language")
@@ -759,10 +978,11 @@ def main():
         print(f"\n  !! {len(failed)} boards FAILED to fetch — these look "
               f"identical to 'no matching roles', so this run is an "
               f"incomplete picture:")
-        for source, slug, status in sorted(failed)[:15]:
+        shown = sorted(failed) if args.verbose else sorted(failed)[:15]
+        for source, slug, status in shown:
             print(f"       {slug} ({source}): {status}")
-        if len(failed) > 15:
-            print(f"       ... and {len(failed) - 15} more")
+        if not args.verbose and len(failed) > 15:
+            print(f"       ... and {len(failed) - 15} more (--verbose for all)")
         print("     Re-run before treating this CSV as a diff baseline.")
 
     if dupes and args.show_dupes:
@@ -771,5 +991,39 @@ def main():
             print(f"       {slug}: {a} + {b}")
 
 
+def main(argv=None) -> int:
+    global GRAD_DATE
+    args = parse_args(argv)
+    if args.grad_date:
+        GRAD_DATE = parse_grad_date(args.grad_date)
+
+    tasks, by_source = collect_tasks()
+    if not tasks:
+        print("No slugs found. Create the companies_*.txt files first.")
+        return 1
+
+    dupes = find_cross_file_dupes(by_source)
+    if dupes:
+        print(f"note: {len(dupes)} slugs appear in more than one slug file "
+              f"(run --show-dupes to list them)", file=sys.stderr)
+
+    print(f"Checking {len(tasks)} boards...\n")
+    rows, dead, failed, hits = run_scrape(tasks, args.workers)
+
+    if args.prune:
+        for source, path in SLUG_FILES.items():
+            if not dead[source] or not os.path.exists(path):
+                continue
+            prune_file(path, dead[source])
+            print(f"pruned {len(dead[source])} dead slugs from {path}")
+
+    rows, collapsed = rank_and_dedup(rows)
+    new_rows, new_path = write_outputs(rows, args.output, args.seen, failed,
+                                       args.force_seen)
+    print_summary(rows, new_rows, new_path, args.output, hits, collapsed,
+                  dead, failed, dupes, args)
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

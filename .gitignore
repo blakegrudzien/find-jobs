@@ -12,3 +12,8 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+
+CLAUDE.md
+Handoff.md.pytest_cache/
+.ruff_cache/

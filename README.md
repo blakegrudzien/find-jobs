@@ -33,7 +33,7 @@ behind a login, and one run is a few hundred GETs across 12 threads.
 | Ashby | `api.ashbyhq.com/posting-api/job-board/{slug}` |
 | Lever | `api.lever.co/v0/postings/{slug}?mode=json` |
 
-**Filtering** — a posting has to clear three gates:
+**Filtering** — a posting has to clear four gates:
 
 - **Title** contains a role keyword (backend, data engineer, forward deployed,
   solutions engineer, …) and no seniority marker (senior, staff, principal,
@@ -50,9 +50,11 @@ behind a login, and one run is a few hundred GETs across 12 threads.
 
 **Scoring** — an additive 0–100ish heuristic over role type, new-grad language
 in the title and body, years required, Bay Area location, whether the posting
-offers mentorship or expects you to provide it, company size (proxied by how
-many roles the board has open), and a penalty for crunch-culture language
-("run through walls", "whatever it takes", "80 hours").
+offers mentorship or expects you to provide it, company stage as stated in the
+posting text (series A/B and greenfield help; "founding engineer" and
+"employee #7" hurt, since they describe a team with nobody to learn from), and
+a penalty for crunch-culture language ("run through walls", "whatever it
+takes", "80 hours").
 
 **Output** — `jobs.csv`, ranked, plus `jobs_new.csv` containing only postings
 not seen in a previous run. A `seen_urls.json` store tracks what's already been
@@ -70,7 +72,25 @@ python find_jobs.py -o out.csv         # choose the output path
 python find_jobs.py --workers 16       # more concurrency
 python find_jobs.py --prune            # comment out slugs that 404'd
 python find_jobs.py --show-dupes       # slugs listed under >1 platform
+python find_jobs.py --seen PATH        # where the seen-URL store lives
+python find_jobs.py --grad-date 2026-05  # cohort to score against
+python find_jobs.py --verbose          # full detail on every failed board
 ```
+
+`--force-seen` updates the seen-URL store even when boards failed to fetch.
+That poisons the next run's diff — see **Output** above — so prefer re-running.
+
+## Tests
+
+```bash
+pip install pytest
+python -m pytest
+```
+
+The suite is mostly regression tests: one case per bug in the list below, so
+that a fix is enforced by an assertion rather than by a comment. Anything
+touching the years regex, the title matching, or the slug-file rewriting
+should come with a new case.
 
 ## Notes on precision
 
@@ -98,7 +118,13 @@ the full bonus — 16% of all output. It's a case-sensitive `\bI\b(?!I)` now.
 ## Known limitations
 
 - Bay Area detection is a hardcoded city list, not geocoding.
-- Board size is a weak proxy for company size — it conflates "small company"
-  with "few roles open right now", so it's weighted lightly on purpose.
+- Board size is reported in the CSV but deliberately **not** scored. It was
+  meant to proxy company headcount and measurement showed it doesn't: across
+  402 live boards, the companies with ≤5 open roles were netlify, dremio,
+  motive, prisma and gremlin — established firms hiring selectively, not small
+  engineering teams. The old penalty was docking points for a hiring freeze.
+  The aggregate trend is real but weak (8.6% of postings on tiny boards use
+  founding-engineer language vs 1.5% on the largest), and the posting text is
+  measured directly instead.
 - The scoring weights are hand-tuned against my own preferences, not validated
   against outcomes. The score is a proxy, not a measured predictor.
