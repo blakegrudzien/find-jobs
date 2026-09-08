@@ -1,0 +1,14 @@
+# Scraper output — contains named companies scored against me, with
+# crunch_flags and fit_score columns. Not for public consumption.
+jobs/
+*.csv
+
+# Run state
+seen_urls.json
+*.tmp
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/

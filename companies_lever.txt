@@ -1,0 +1,123 @@
+aeratechnology
+# akunacapital  (404)
+alloy
+# ambient.ai  (404)
+ambirobotics
+anyscale
+# applied  (404)
+# applovin  (404)
+# armissecurity  (404)
+artera-2
+avante
+# base-power  (404)
+# beaconsoftware  (404)
+# bitgo  (404)
+blinq
+burga
+# candidhealth  (404)
+carbonhealth
+# cartesia  (404)
+# causal  (404)
+# character  (404)
+# circleback  (404)
+# clockworksystems  (404)
+collate
+# compunetinc  (404)
+# correlationone  (404)
+# coworker  (404)
+curri
+# d3  (404)
+# devrev  (404)
+# dialpad  (404)
+# dmcengineering2024  (404)
+# doss  (404)
+drivetrain
+# droyd  (404)
+# drweng  (404)
+# eclipsetrading  (404)
+egen
+# engflow  (404)
+finch
+# firefly-co  (404)
+floqast
+# flowengineering  (404)
+foodsmart
+gamma
+gluegroups
+gopuff
+grailbio
+# greenboard  (404)
+# gridcare  (404)
+# hyperscale  (404)
+includedhealth
+# kastle  (404)
+# kustomer  (404)
+labelbox
+# legionhealth  (404)
+leverdemo-8
+# lightfield  (404)
+loftorbital
+# lumaai  (404)
+mainspringenergy
+matillion
+# mercor  (404)
+metabase
+# metriport  (404)
+# mintmcp  (404)
+# mistral.ai  (404)
+# mithrl  (404)
+# monaco  (404)
+moonpay
+nango
+# nebius  (404)
+neon
+# neweratech  (404)
+nimblerx
+# novellia  (404)
+# numeric  (404)
+# offstream  (404)
+# ollama  (404)
+# opengov  (404)
+# output  (404)
+# pactfi  (404)
+# palo-it  (404)
+# perpay  (404)
+# phonely  (404)
+plaid
+# plenful  (404)
+# point72  (404)
+porter
+# pragmatike  (404)
+# rebar  (404)
+redwoodcu
+regal.ai
+rillet
+# rise8  (404)
+# rundoo  (404)
+satispay
+# sciforium  (404)
+sgff.org
+smarsh
+# sonicwall  (404)
+steerbridge
+superannotate
+# swans  (404)
+sysdig
+tecton
+teleport
+# terminal  (404)
+# thebotcompany  (404)
+# thenuclearcompany  (404)
+# thinkingmachines  (404)
+tinybird
+# trm-labs  (404)
+# trovy  (404)
+trunkio
+tryjeeves
+# tsenta  (404)
+# waystation  (404)
+wealthfront
+windfalldata
+xsolla
+zerotier
+# zoomlogi  (404)

@@ -1,0 +1,186 @@
+affirm
+airbnb
+airtable
+akunacapital
+alfredbeneschco
+alloy
+# ambient.ai  (404)
+amplitude
+andurilindustries
+anthropic
+# applied  (404)
+applovin
+appsflyer
+armissecurity
+asana
+asm
+assemblyai
+# base-power  (404)
+bayada
+# beaconsoftware  (404)
+bitgo
+brex
+# candidhealth  (404)
+# cartesia  (404)
+# causal  (404)
+chainguard
+# character  (404)
+checkr
+chime
+# circleback  (404)
+circleci
+clickhouse
+clockworksystems
+cloudflare
+cockroachlabs
+comet
+compunetinc
+correlationone
+# coworker  (404)
+cresta
+cribl
+d3
+dagger
+databricks
+datadog
+devrev
+dialpad
+# dmcengineering2024  (404)
+# doss  (404)
+dremio
+dropbox
+# droyd  (404)
+drweng
+eclipsetrading
+edo
+elastic
+encore
+# engflow  (404)
+faire
+fieldwire
+figma
+# firefly-co  (404)
+fivetran
+# flowengineering  (404)
+freeformfuturecorp
+galileo
+gemini
+gigs
+gitlab
+grafanalabs
+# grailbio  (404)
+# greenboard  (404)
+gremlin
+# gridcare  (404)
+gridmaticinc
+gusto
+hextechnologies
+hightouch
+honeycomb
+humansignal
+# hyperscale  (404)
+imply
+instacart
+ionq
+jfrog
+kairospower
+# kastle  (404)
+knock
+komodohealth
+# kustomer  (404)
+labelbox
+launchdarkly
+# legionhealth  (404)
+# leverdemo-8  (404)
+levitate
+# lightfield  (404)
+# lumaai  (404)
+lyft
+# mainspringenergy  (404)
+marqeta
+# mercor  (404)
+mercury
+merge
+# metriport  (404)
+# mintmcp  (404)
+# mistral.ai  (404)
+# mithrl  (404)
+mixpanel
+# monaco  (404)
+mongodb
+monks
+motive
+nebius
+neo4j
+netlify
+netskope
+neweratech
+newrelic
+nooks
+# novellia  (404)
+# numeric  (404)
+# offstream  (404)
+okta
+# ollama  (404)
+# opengov  (404)
+opswat
+oura
+# output  (404)
+# pactfi  (404)
+pagerduty
+# palo-it  (404)
+paradigm
+perpay
+# phonely  (404)
+pinterest
+planetscale
+# plenful  (404)
+poetic
+point72
+postman
+# pragmatike  (404)
+prisma
+qgenda
+# rebar  (404)
+recursionpharmaceuticals
+# regal.ai  (404)
+# rillet  (404)
+rise8
+robinhood
+roblox
+# rundoo  (404)
+samsara
+# satispay  (404)
+scaleai
+# sciforium  (404)
+sigmacomputing
+singlestore
+socket
+sofi
+sonicwall
+starburst
+streamnative
+stripe
+sumologic
+sumup
+# swans  (404)
+tailscale
+temporaltechnologies
+# terminal  (404)
+# thebotcompany  (404)
+thenuclearcompany
+# thinkingmachines  (404)
+thoughtworks
+# trm-labs  (404)
+# trovy  (404)
+# tsenta  (404)
+twilio
+vercel
+veristainc
+verkada
+voxel51
+# waystation  (404)
+weave
+yugabyte
+# zoomlogi  (404)
+zscaler
