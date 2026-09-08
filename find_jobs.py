@@ -63,11 +63,13 @@ SLUG_FILES = {
 EXCLUDE_SLUGS = {"leverdemo-8"}
 
 TITLE_KEYWORDS = [
-    "data engineer", "backend", "back-end", "back end",
+    "data engineer", "data platform", "data infrastructure",
+    "backend", "back-end", "back end",
     "platform engineer", "infrastructure engineer", "software engineer",
     "solutions engineer", "solution engineer", "sales engineer",
-    "forward deployed", "customer engineer", "application engineer",
-    "field application", "implementation engineer", "technical consultant",
+    "forward deployed", "customer engineer",
+    "application engineer", "applications engineer",
+    "implementation engineer", "technical consultant",
     "solutions consultant", "solutions architect", "analytics engineer",
     "integration engineer", "developer support", "support engineer",
     "deployed engineer", "technical support engineer",
@@ -272,8 +274,8 @@ TITLE_PRIORITY = [
     (["forward deployed", "deployed engineer", "customer engineer",
       "solutions engineer", "solution engineer", "solutions architect",
       "solutions consultant", "sales engineer", "technical consultant",
-      "application engineer", "field application", "implementation engineer",
-      "integration engineer"], 12),
+      "application engineer", "applications engineer",
+      "implementation engineer", "integration engineer"], 12),
     (["support engineer", "technical support", "developer support"], 8),
 ]
 
@@ -284,16 +286,23 @@ TITLE_PRIORITY = [
 # postings sink to the bottom of a list that is read top-down — you would never
 # see them and never know they were mis-scored.
 #
-# "field application" was in that state. It happened to score anyway, because a
-# real title ("Field Application Engineer") also contains "application
-# engineer" — correct by coincidence of English, not by construction. It is now
-# an explicit tier entry, which changes no score and makes the invariant hold.
+# "field application" was in that state, and the fix was to DROP it rather than
+# give it a tier. A Field Application Engineer is the same job as a solutions
+# engineer, and it passes via "application engineer" — the bare keyword added
+# nothing except a gate for field-application roles that aren't engineering
+# ones ("Field Application Specialist", "Field Agent"), which are not wanted.
 #
-# The reverse direction (a tier phrase absent from TITLE_KEYWORDS, currently
-# "data platform" and "data infrastructure") is harmless: those titles already
-# pass the filter via "platform engineer" / "infrastructure engineer". Adding
-# them to TITLE_KEYWORDS would WIDEN the filter, which is a targeting decision,
-# not a cleanup — so it is deliberately not done here.
+# Dropping it did lose the PLURAL spelling, which is the more common one:
+# "Field Applications Engineer" contains neither "field application"-as-a-word
+# nor "application engineer" (the "s" breaks it). "applications engineer" is
+# therefore its own keyword and tier entry. That also picks up a bare
+# "Applications Engineer", which never matched before — same job, so it should.
+#
+# "data platform" and "data infrastructure" went the other way: they were tier
+# entries with no matching keyword. They are now keywords too, which widens the
+# filter slightly (a "Data Platform Specialist" now passes where it previously
+# needed "platform engineer" in the title). That is a deliberate targeting
+# decision, not a cleanup.
 _UNTIERED = [k for k in TITLE_KEYWORDS
              if not any(p in k or k in p
                         for tier, _ in TITLE_PRIORITY for p in tier)]
@@ -355,7 +364,14 @@ W_NEWGRAD_TITLE = 20        # new-grad language in the title
 W_NEWGRAD_BODY_PER_HIT = 6  # per distinct EXPLICIT_NEWGRAD phrase in the body
 W_NEWGRAD_BODY_CAP = 18
 W_YEARS_UNSTATED = 10       # usually fine, but more ambiguous than a stated 1
-W_YEARS_ONE = 15            # an explicit 1 means they set the level low
+W_YEARS_LOW = 15            # a stated floor of 0 or 1 — they set the level low
+                            # on purpose, which is the best single signal there
+                            # is. "0-2 years" earns this the same as "1 year":
+                            # both say they will take someone with no
+                            # professional experience, and an explicit range
+                            # starting at 0 is if anything the clearer of the
+                            # two. Only a genuinely unstated requirement falls
+                            # back to W_YEARS_UNSTATED.
 W_YEARS_TWO = 6
 W_BAY_AREA = 15
 W_REMOTE = 4
@@ -573,14 +589,19 @@ def location_ok(location: Optional[str]) -> bool:
     return not REMOTE_NON_US.search(loc)  # unspecified remote is fine
 
 
-def fit_score(title: str, location: str, body: str, years_floor: int,
+def fit_score(title: str, location: str, body: str, years: tuple,
               crunch: Sequence[str], grad_date: Optional[tuple] = None) -> int:
     """0-100ish. Higher = closer to what Blake actually wants.
 
-    `years_floor` is the BOTTOM of the stated range (see years_required); the
-    filter has already screened on the top. `crunch` is the full list of
-    matched flags — the penalty cap is applied here, not by the caller.
+    `years` is the (floor, ceiling) pair from years_required. Both are needed:
+    the floor says how low they set the bar, and the ceiling is the only way to
+    tell a genuinely unstated requirement (0, 0) from an explicit "0-2 years"
+    (0, 2). The filter has already screened on the ceiling.
+
+    `crunch` is the full list of matched flags — the penalty cap is applied
+    here, not by the caller.
     """
+    years_floor, years_ceiling = years
     t = title.lower()
     low = body.lower()
     score = 0
@@ -598,10 +619,10 @@ def fit_score(title: str, location: str, body: str, years_floor: int,
     score += min(hits * W_NEWGRAD_BODY_PER_HIT, W_NEWGRAD_BODY_CAP)
 
     # --- years (max 15) ---
-    if years_floor == 0:
-        score += W_YEARS_UNSTATED        # unstated, or an explicit "0-N"
-    elif years_floor == 1:
-        score += W_YEARS_ONE
+    if years_ceiling == 0:
+        score += W_YEARS_UNSTATED        # nothing stated anywhere in the body
+    elif years_floor <= 1:
+        score += W_YEARS_LOW             # "0-2 years" or "1 year"
     elif years_floor == 2:
         score += W_YEARS_TWO
 
@@ -667,7 +688,8 @@ def make_row(company: str, source: str, title: str, location: str, url: str,
     # the only evidence that would show whether the cap was ever binding.
     crunch = find_flags(body, CRUNCH_FLAGS)
     return {
-        "fit_score": fit_score(title, location, body, years_floor, crunch,
+        "fit_score": fit_score(title, location, body,
+                               (years_floor, years_ceiling), crunch,
                                grad_date),
         "company": company,
         "source": source,

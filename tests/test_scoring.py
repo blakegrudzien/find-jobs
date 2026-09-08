@@ -45,20 +45,49 @@ def test_filter_still_screens_on_the_ceiling():
                        "u", "1-3 years of experience") is None
 
 
-def test_zero_to_two_years_no_longer_scores_below_one_year():
+def test_explicit_zero_to_two_scores_the_same_as_one_year():
     """The inversion this fix exists for.
 
     "0-2 years" means they are open to someone with none. Scoring it on the
     ceiling ranked it as a two-year req, 9 points below an explicit "1 year",
-    which mis-ordered the only part of the list that gets read.
+    which mis-ordered the only part of the list that gets read. A stated floor
+    of 0 and a stated floor of 1 are the same signal and now score the same.
     """
     common = {"title": "Backend Engineer", "location": "San Francisco",
               "body": ""}
-    zero_two = fj.fit_score(years_floor=0, crunch=[], **common)
-    one_year = fj.fit_score(years_floor=1, crunch=[], **common)
-    two_year = fj.fit_score(years_floor=2, crunch=[], **common)
+    zero_two = fj.fit_score(years=(0, 2), crunch=[], **common)
+    one_year = fj.fit_score(years=(1, 1), crunch=[], **common)
+    two_year = fj.fit_score(years=(2, 2), crunch=[], **common)
+    assert zero_two == one_year, "a stated 0-N is as strong a signal as a 1"
     assert zero_two > two_year, "a 0-N req must not score as a hard N req"
-    assert one_year > zero_two, "an explicit 1 is still the strongest signal"
+
+
+def test_unstated_years_scores_below_an_explicit_low_floor():
+    """An unstated requirement is usually fine but more ambiguous than a
+    stated one, so it must NOT collect the same bonus as an explicit "0-2"."""
+    common = {"title": "Backend Engineer", "location": "San Francisco",
+              "body": ""}
+    unstated = fj.fit_score(years=(0, 0), crunch=[], **common)
+    zero_two = fj.fit_score(years=(0, 2), crunch=[], **common)
+    assert unstated < zero_two
+    assert zero_two - unstated == fj.W_YEARS_LOW - fj.W_YEARS_UNSTATED
+
+
+def test_zero_to_two_matches_one_year_end_to_end():
+    def score(body):
+        return fj.make_row("c", "greenhouse", "Backend Engineer",
+                           "San Francisco", "u", body)["fit_score"]
+
+    # These bodies must actually match YEARS_PATTERN, which needs a qualifying
+    # word after the number ("experience"). A bare "Requires 1 year." parses as
+    # (0, 0) — unstated — and would make this pass without exercising the
+    # years component at all.
+    assert fj.years_required("0-2 years of experience") == (0, 2)
+    assert fj.years_required("1 year of experience") == (1, 1)
+    # "0-2 years" is itself an EXPLICIT_NEWGRAD phrase and "1 year" is not, so
+    # the only difference left between the two is that one body bonus
+    assert score("0-2 years of experience") == \
+        score("1 year of experience") + fj.W_NEWGRAD_BODY_PER_HIT
 
 
 def test_zero_to_two_beats_a_flat_two_end_to_end():
@@ -106,14 +135,14 @@ def test_no_flag_list_has_duplicate_entries(flags):
 # --- crunch penalty is capped explicitly, not by a display slice -----------
 
 def test_crunch_penalty_is_five_each_up_to_the_cap():
-    base = fj.fit_score("Backend Engineer", "San Francisco", "", 1, [])
-    one = fj.fit_score("Backend Engineer", "San Francisco", "", 1, ["a"])
+    base = fj.fit_score("Backend Engineer", "San Francisco", "", (1, 1), [])
+    one = fj.fit_score("Backend Engineer", "San Francisco", "", (1, 1), ["a"])
     assert base - one == fj.CRUNCH_PENALTY_EACH
 
 
 def test_crunch_penalty_stops_at_the_cap():
-    base = fj.fit_score("Backend Engineer", "San Francisco", "", 1, [])
-    many = fj.fit_score("Backend Engineer", "San Francisco", "", 1,
+    base = fj.fit_score("Backend Engineer", "San Francisco", "", (1, 1), [])
+    many = fj.fit_score("Backend Engineer", "San Francisco", "", (1, 1),
                         ["a", "b", "c", "d", "e"])
     assert base - many == fj.CRUNCH_PENALTY_EACH * fj.CRUNCH_PENALTY_MAX_FLAGS
 
@@ -158,10 +187,44 @@ def test_every_title_keyword_maps_to_a_priority_tier():
     assert not untiered, f"no tier for: {untiered}"
 
 
-def test_role_type_points_are_awarded_for_a_field_application_title():
+def test_field_application_engineer_still_passes_and_scores_as_an_se():
+    """FAE is the same job as a solutions engineer. The bare "field
+    application" keyword was dropped, so this must still pass via
+    "application engineer" and land in the 12-point tier."""
     row = fj.make_row("c", "greenhouse", "Field Application Engineer",
                       "San Francisco", "u", "")
-    assert row["fit_score"] > 0
+    assert row is not None and row["fit_score"] > 0
+    assert "field application" not in fj.TITLE_KEYWORDS
+
+
+def test_field_application_non_engineering_titles_are_not_matched():
+    assert fj.title_matches("Field Application Specialist") is False
+    assert fj.title_matches("Field Agent") is False
+
+
+@pytest.mark.parametrize("title", [
+    "Field Applications Engineer",
+    "Applications Engineer",
+    "Technical Applications Engineer",
+])
+def test_plural_applications_engineer_matches(title):
+    """The plural is the more common spelling of the title and contains
+    neither "field application" nor "application engineer" — the "s" breaks
+    the singular keyword — so it needs its own entry."""
+    assert fj.title_matches(title) is True
+
+
+@pytest.mark.parametrize("title", [
+    "Data Platform Engineer",
+    "Data Platform Specialist",
+    "Data Infrastructure Engineer",
+])
+def test_data_platform_and_infrastructure_titles_pass(title):
+    assert fj.title_matches(title) is True
+
+
+def test_seniority_still_disqualifies_the_plural_form():
+    assert fj.title_matches("Senior Applications Engineer") is False
 
 
 # --- grad date is overridable and parsed strictly -------------------------

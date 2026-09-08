@@ -38,8 +38,8 @@ These were set deliberately in a calibration interview. Don't "clean them up."
 | Role type | max 25 | backend + data = 25; SWE/platform/infra = 18; FDE/solutions = 12; support = 8 |
 | New-grad in title | +20 | **Seniority signals are meant to outweigh role type.** Confirmed choice: the ranking answers "can I actually get this?" before "is this the ideal flavor?" |
 | New-grad in body | max +18 | same |
-| Years: 1 stated | +15 | an explicit "1 year" means they set the level low on purpose — the best single signal |
-| Years: unstated | +10 | usually fine, but more ambiguous than an explicit 1 |
+| Years: stated floor of 0 or 1 | +15 | an explicit "1 year" — or an explicit "0-2 years" — means they set the level low on purpose. The best single signal. A range starting at 0 says they will take someone with no professional experience, so it earns the same as a stated 1 |
+| Years: unstated | +10 | usually fine, but more ambiguous than an explicit low floor |
 | Years: 2 stated | +6 | |
 | Bay Area | +15 | |
 | Remote | +4 | |
@@ -68,8 +68,11 @@ posting text. Don't reintroduce it.
 1. **Title** — matches `TITLE_KEYWORDS`, and no `TITLE_DISQUALIFIERS`.
    Note `" ii"` is deliberately *not* a disqualifier: level-II roles still pass,
    they just no longer get a new-grad bonus.
-2. **Years** — `max_years_required(body) <= MAX_YEARS` (2). Reads the **top** of
-   a range, so "1-3 years" is 3.
+2. **Years** — `years_required(body)` returns `(floor, ceiling)`. The filter
+   screens on the **ceiling**, so "1-3 years" is 3 and is dropped. The score
+   uses the **floor**, because a range carries two different facts: the top is
+   what they will demand, the bottom is how low they set the bar. Scoring the
+   ceiling made "0-2 years" rank below "1 year", which is backwards.
 3. **Grad year** — dropped only if the *earliest* cohort named is more than
    `GRAD_HORIZON_MONTHS` (12) out. A winter-grad req counts; two cohorts out
    doesn't.
