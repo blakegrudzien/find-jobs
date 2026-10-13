@@ -283,3 +283,55 @@ zed
 zettabyte-space
 zoomlogi
 zyphra
+
+# --- added 2026-09-08 from site: searches; every slug verified live ---
+1mind
+cassihome
+classdojo
+clubhouse
+code-metal
+collective
+column
+compa
+eagle
+ema
+enode
+ironcladhq
+meshy
+n1
+orb
+permitflow
+perplexity
+polymarket
+popl
+profound
+replo
+sensor-tower
+sentra
+speak
+tenexlabs
+vapi
+zefir
+zip
+# live board, zero open roles when added - uncomment if it refills
+# anara
+# grepr
+
+# --- added 2026-09-14 from site: searches; every slug verified live ---
+alt
+cohort
+sentilink
+uniswap
+valon
+
+# --- added 2026-10-08 from site: searches; every slug verified live ---
+8vc
+commure
+dehazelabs
+ellipsislabs
+handshake
+litellm
+replit
+rubie
+truelogic
+vooma

@@ -128,6 +128,16 @@ def test_prune_is_idempotent(tmp_path):
 
 # --- bug: leverdemo-8 is Lever's own demo board, not a company -------------
 
+@pytest.mark.parametrize("demo", ["leverdemo-8", "salesdemo-jr"])
+def test_lever_demo_boards_are_excluded(demo, tmp_path):
+    """Both are Lever demo boards, not companies: generic postings that score
+    well and are never a real lead."""
+    assert demo in fj.EXCLUDE_SLUGS
+    f = tmp_path / "c.txt"
+    f.write_text(f"{demo}\nrealcompany\n")
+    assert fj.load_slugs(str(f)) == ["realcompany"]
+
+
 def test_leverdemo_is_excluded(tmp_path):
     assert "leverdemo-8" in fj.EXCLUDE_SLUGS
     f = tmp_path / "companies_lever.txt"

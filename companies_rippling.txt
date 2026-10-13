@@ -19,3 +19,30 @@ rippling
 # because the Rippling board is live and boards move; --show-dupes will flag
 # the overlap and dedup_key collapses any JD that appears on both.
 terminal
+
+# --- added 2026-09-08 from site: searches; every slug verified live ---
+accelerant
+growth-signals
+loop
+neosigma
+pendulum-intelligence-jobs
+safety-radar-careers
+sightmachine
+urban-sdk
+# live board, zero open roles when added - uncomment if it refills
+# rivet-industries
+
+# --- added 2026-09-14 from site: searches; every slug verified live ---
+flexai
+
+# --- added 2026-10-08 from site: searches; every slug verified live ---
+inseego
+zixi
+# These surfaced from an entry-level engineer search but are mostly non-eng
+# verticals (betting, staffing, energy consulting). Live boards, kept in case
+# they post Bay Area eng roles; the title/location filters drop them meanwhile.
+agencycyber
+betmakers
+energy-strategies-llc
+get-engaged
+veryable-careers

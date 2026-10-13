@@ -63,8 +63,11 @@ SLUG_FILES = {
 
 # Boards that are not real companies. leverdemo-8 is Lever's own demo board:
 # it has many generic-looking postings that score well and it is never a real
-# lead. Skipped on every source regardless of which slug file it appears in.
-EXCLUDE_SLUGS = {"leverdemo-8"}
+# lead. salesdemo-jr is the same thing under a different name — it surfaced in
+# a site:jobs.lever.co search with 21 textbook-generic postings ("Account
+# Executive", "Backend Engineer", "Associate Product Manager"). Both are
+# skipped on every source regardless of which slug file they appear in.
+EXCLUDE_SLUGS = {"leverdemo-8", "salesdemo-jr"}
 
 TITLE_KEYWORDS = [
     "data engineer", "data platform", "data infrastructure",
