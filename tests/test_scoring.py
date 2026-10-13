@@ -1,9 +1,8 @@
-"""Tests for the scoring fixes made during the September 2026 review.
+"""Tests for the scoring model.
 
-Each test here corresponds to a defect that was live before that pass. They
-are separated from test_regressions.py only so the provenance stays legible:
-those pin bugs that shipped and were fixed earlier, these pin bugs found by
-reading the code against the goals in CLAUDE.md.
+Kept separate from test_regressions.py so provenance stays legible: those pin
+bugs that shipped and were fixed, these pin the scoring and filter contracts
+that the ranking depends on.
 """
 
 import importlib.util

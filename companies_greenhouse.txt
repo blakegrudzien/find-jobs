@@ -185,7 +185,7 @@ yugabyte
 # zoomlogi  (404)
 zscaler
 
-# --- added 2026-09-08 from site: searches; every slug verified live ---
+# added 2026-09-08
 66degrees
 addepar1
 amtechsoftware
@@ -210,10 +210,10 @@ striiminc
 togetherai
 webflow
 youcom
-# live board, zero open roles when added - uncomment if it refills
+# no open roles when added
 # nextdoorcampus
 
-# --- added 2026-09-14 from site: searches; every slug verified live ---
+# added 2026-09-14
 anaplan
 ansa
 anteriad
@@ -231,13 +231,10 @@ smartsheet
 springhealth66
 tebra
 vannevarlabs
-# aircall is on BOTH Lever (aircall) and Greenhouse (aircallioinc). Checked 2026-09-14:
-# only 14 of ~70 titles appear on both and none of the title-matching roles
-# overlap (Lever: software engineer roles; Greenhouse: regional FDE roles),
-# so both are kept. Slugs differ, so dedup_key will not merge rows between them.
+# also on Lever as "aircall"; the two boards list different roles
 aircallioinc
 
-# --- added 2026-10-08 from site: searches; every slug verified live ---
+# added 2026-10-08
 buzzsolutions
 cssmerge
 idmeuniversityrecruiting

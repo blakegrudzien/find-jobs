@@ -1,12 +1,8 @@
 """Regression tests for bugs that have already shipped once.
 
-Every test here corresponds to a bug documented in CLAUDE.md under "Bugs
-already found and fixed". They exist so that the fix is enforced by an
-assertion rather than by a paragraph of prose that nothing executes.
-
-Two of these bugs corrupted the only region of the output that matters:
-the `" i"` substring bug affected 16% of all rows, and the YEARS_PATTERN
-bug put over-experienced roles in 24% of the top 50.
+Each test pins a fix that previously regressed, so the behaviour is enforced
+by an assertion rather than by a comment. Most of them guard the keyword and
+experience matching, where a silent change corrupts the top of the ranking.
 """
 
 import datetime

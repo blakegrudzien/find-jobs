@@ -102,6 +102,31 @@ that a fix is enforced by an assertion rather than by a comment. Anything
 touching the years regex, the title matching, or the slug-file rewriting
 should come with a new case.
 
+## Second source: HN "Who is hiring?"
+
+`hn_hiring.py` reads the monthly [Ask HN: Who is hiring?](https://news.ycombinator.com/submitted?id=whoishiring)
+threads through HN's official free Algolia API and applies the same four
+filters and the same scoring model as `find_jobs.py`.
+
+```bash
+python hn_hiring.py                 # newest thread -> hn_hiring.csv
+python hn_hiring.py --months 3      # last three threads
+python hn_hiring.py --all-locations # skip the Bay-Area/remote filter
+```
+
+Two reasons it's worth having. The threads skew heavily SF and startup, and
+the posts are written by a founder or an engineer on the team — so every row
+carries an `hn_author` column, which is a named person to contact. No ATS
+posting gives you that.
+
+It is a **separate script writing a separate CSV**, on purpose. A
+Who-is-hiring comment is freeform prose, so company, title and location have
+to be parsed heuristically out of a loose `Company | Role | Location`
+convention that posters follow inconsistently. Feeding heuristic rows into
+`jobs.csv` would put parse errors at the top of the one list that gets read
+top-down. Comments with no recognisable role are dropped rather than guessed
+at, for the same reason.
+
 ## Notes on precision
 
 The filter's only real job is to keep unqualifiable roles off the top of the

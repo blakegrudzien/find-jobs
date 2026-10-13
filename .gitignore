@@ -1,19 +1,23 @@
-# Scraper output — contains named companies scored against me, with
-# crunch_flags and fit_score columns. Not for public consumption.
+# Scraper output — named companies with fit_score and crunch_flags columns.
+# Not for publication.
 jobs/
 *.csv
 
 # Run state
 seen_urls.json
+hn_seen.json
 *.tmp
+
+# Local working notes, not for the public repo
+CLAUDE.md
+HANDOFF.md
 
 # Python
 __pycache__/
 *.py[cod]
 .venv/
 venv/
-
-
-CLAUDE.md
-Handoff.md.pytest_cache/
+.pytest_cache/
 .ruff_cache/
+CLAUDE.md
+*.md

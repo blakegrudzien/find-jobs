@@ -284,7 +284,7 @@ zettabyte-space
 zoomlogi
 zyphra
 
-# --- added 2026-09-08 from site: searches; every slug verified live ---
+# added 2026-09-08
 1mind
 cassihome
 classdojo
@@ -313,18 +313,18 @@ tenexlabs
 vapi
 zefir
 zip
-# live board, zero open roles when added - uncomment if it refills
+# no open roles when added
 # anara
 # grepr
 
-# --- added 2026-09-14 from site: searches; every slug verified live ---
+# added 2026-09-14
 alt
 cohort
 sentilink
 uniswap
 valon
 
-# --- added 2026-10-08 from site: searches; every slug verified live ---
+# added 2026-10-08
 8vc
 commure
 dehazelabs

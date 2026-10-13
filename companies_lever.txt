@@ -122,7 +122,7 @@ xsolla
 zerotier
 # zoomlogi  (404)
 
-# --- added 2026-09-08 from site: searches; every slug verified live ---
+# added 2026-09-08
 anyroad
 arbitalhealth
 brillio-2
@@ -135,19 +135,16 @@ secureframe
 veeva
 weride
 
-# --- added 2026-09-14 from site: searches; every slug verified live ---
+# added 2026-09-14
 bpmcpa
 hive
 paralleldomain
 peakgames
 turgon-ai
-# aircall is on BOTH Lever (aircall) and Greenhouse (aircallioinc). Checked 2026-09-14:
-# only 14 of ~70 titles appear on both and none of the title-matching roles
-# overlap (Lever: software engineer roles; Greenhouse: regional FDE roles),
-# so both are kept. Slugs differ, so dedup_key will not merge rows between them.
+# also on Greenhouse as "aircallioinc"; the two boards list different roles
 aircall
 
-# --- added 2026-10-08 from site: searches; every slug verified live ---
+# added 2026-10-08
 dreamgames
 getmidas
 prosper

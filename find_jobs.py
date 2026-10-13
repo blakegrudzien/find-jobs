@@ -2,8 +2,8 @@
 """
 Pulls open roles from Greenhouse, Ashby, Lever, and Rippling job boards.
 
-Reads company slugs from plain text files so you can grow the list
-without editing this script.
+Company slugs live in plain text files so the list can grow without
+editing this script.
 
 Setup:
     pip install requests
@@ -18,11 +18,8 @@ Usage:
     python find_jobs.py --prune          # comment out dead slugs in the files
     python find_jobs.py --show-dupes     # slugs listed under >1 platform
     python find_jobs.py --seen PATH      # where the seen-URL store lives
-    python find_jobs.py --force-seen     # update the seen store even if boards
-                                         # failed (poisons the next diff --
-                                         # see the note in main())
-    python find_jobs.py --grad-date 2026-05   # your graduation, for spotting
-                                              # reqs aimed at a later cohort
+    python find_jobs.py --force-seen     # record a run even if boards failed
+    python find_jobs.py --grad-date 2026-05   # target graduation month
     python find_jobs.py --verbose        # full error detail on failed boards
 
 Finding slugs — look at any job posting URL:
@@ -61,12 +58,8 @@ SLUG_FILES = {
     "rippling": "companies_rippling.txt",
 }
 
-# Boards that are not real companies. leverdemo-8 is Lever's own demo board:
-# it has many generic-looking postings that score well and it is never a real
-# lead. salesdemo-jr is the same thing under a different name — it surfaced in
-# a site:jobs.lever.co search with 21 textbook-generic postings ("Account
-# Executive", "Backend Engineer", "Associate Product Manager"). Both are
-# skipped on every source regardless of which slug file they appear in.
+# Lever's own demo boards. Both are full of generic postings that score well
+# and are never a real lead, so they are skipped on every source.
 EXCLUDE_SLUGS = {"leverdemo-8", "salesdemo-jr"}
 
 TITLE_KEYWORDS = [
@@ -154,12 +147,8 @@ GRAD_CUE = re.compile(r"graduat|class of|new grad|commencement|degree by"
 BRACKETED_YEAR = re.compile(r"^\s*\[(20[2-9]\d)\]")
 
 
-# Your own graduation, for spotting reqs aimed at a later cohort.
-# This is a constant whose MEANING drifts with the calendar rather than one
-# that goes stale loudly, so it is overridable from the command line
-# (--grad-date YYYY-MM) instead of being buried here. Revisit whenever the
-# target cohort changes; a wrong value here quietly mis-penalises every
-# class-year posting in the run.
+# Target graduation, for spotting reqs aimed at a later cohort. Overridable
+# with --grad-date, since its meaning drifts with the calendar.
 GRAD_DATE = (2026, 5)                    # May 2026
 
 
@@ -167,8 +156,8 @@ def grad_dates(text: str) -> list:
     """(year, month) pairs that look like a required graduation date.
 
     month is None when the text named only a year, which matters downstream:
-    "New Grad 2026" is your own cohort, while "New Grad (December 2026)" is
-    the cohort behind you.
+    "New Grad 2026" is the target cohort, "New Grad (December 2026)" is the
+    one after it.
     """
     found = []
     lead = BRACKETED_YEAR.match(text)
@@ -200,21 +189,20 @@ def grad_year_too_far(text: str,
 
 def cohort_later_than_yours(text: str,
                             grad_date: Optional[tuple] = None) -> bool:
-    """True if the earliest cohort this posting names graduates after you.
+    """True if the earliest cohort named graduates after GRAD_DATE.
 
-    These are still worth applying to — plenty of programs take grads from
-    the prior year — so they're penalised rather than filtered, and they
-    shouldn't outrank a role that's open to you right now.
+    Still worth applying to, since programs often take grads from the prior
+    year, so these are penalised rather than filtered out.
 
-    Defaults to None rather than to GRAD_DATE directly: a default argument is
-    bound once at import, so --grad-date would have been silently ignored.
+    grad_date defaults to None, not GRAD_DATE: a default argument binds once
+    at import, which would silently ignore --grad-date.
     """
     grad_date = grad_date or GRAD_DATE
     dates = grad_dates(text)
     if not dates:
         return False
     my_year, my_month = grad_date
-    # a bare year matching your own grad year is your cohort, not a later one
+    # a bare year equal to the target year is that cohort, not a later one
     keys = [(y, my_month if m is None else m) for y, m in dates]
     return min(keys) > (my_year, my_month)
 
@@ -252,12 +240,9 @@ EXPLICIT_NEWGRAD = [
     "graduating", "university graduate", "0-2 years", "0-1 years",
 ]
 
-# Same, but in the title — even stronger.
-# These used to include the bare tokens "i " and " i", meant to catch a level-I
-# title ("Software Engineer I"). As plain substrings they matched any word
-# starting with i, so "Software Engineer, Infrastructure", "AI Backend
-# Engineer" and "Software Engineer II" all collected the full +20. That was
-# 16% of the output. Level-I is now matched separately as a roman numeral.
+# Same, but in the title — even stronger. Level-I titles are matched by
+# TITLE_LEVEL_ONE below, not by a bare "i" substring: that caught every word
+# starting with i ("Infrastructure", "AI Backend Engineer").
 TITLE_NEWGRAD = [
     "new grad", "new graduate", "early career", "associate",
     "university graduate", "entry level", "entry-level", "junior", "graduate",
@@ -267,11 +252,8 @@ TITLE_NEWGRAD = [
 # The negative lookahead keeps it off "II"/"III".
 TITLE_LEVEL_ONE = re.compile(r"\bI\b(?!I)")
 
-# Titles closest to what you actually want, highest first.
-# Backend and data are the target; generic SWE and platform/infra sit in
-# between; customer-facing technical roles are a fallback rather than the
-# goal. Data is listed before platform so "data platform engineer" scores as
-# data rather than falling through to the platform tier.
+# Role types, best first. Data is listed before platform so that
+# "data platform engineer" scores as data rather than as platform.
 TITLE_PRIORITY = [
     (["data engineer", "data platform", "data infrastructure",
       "analytics engineer"], 25),
@@ -286,30 +268,9 @@ TITLE_PRIORITY = [
     (["support engineer", "technical support", "developer support"], 8),
 ]
 
-# TITLE_KEYWORDS gates the filter; TITLE_PRIORITY assigns the role-type points.
-# They are two lists that have to agree, and nothing checked that they did.
-# The failure mode is silent and expensive in exactly one direction: a keyword
-# that passes the filter but matches no tier scores 0 for role type, so those
-# postings sink to the bottom of a list that is read top-down — you would never
-# see them and never know they were mis-scored.
-#
-# "field application" was in that state, and the fix was to DROP it rather than
-# give it a tier. A Field Application Engineer is the same job as a solutions
-# engineer, and it passes via "application engineer" — the bare keyword added
-# nothing except a gate for field-application roles that aren't engineering
-# ones ("Field Application Specialist", "Field Agent"), which are not wanted.
-#
-# Dropping it did lose the PLURAL spelling, which is the more common one:
-# "Field Applications Engineer" contains neither "field application"-as-a-word
-# nor "application engineer" (the "s" breaks it). "applications engineer" is
-# therefore its own keyword and tier entry. That also picks up a bare
-# "Applications Engineer", which never matched before — same job, so it should.
-#
-# "data platform" and "data infrastructure" went the other way: they were tier
-# entries with no matching keyword. They are now keywords too, which widens the
-# filter slightly (a "Data Platform Specialist" now passes where it previously
-# needed "platform engineer" in the title). That is a deliberate targeting
-# decision, not a cleanup.
+# TITLE_KEYWORDS gates the filter, TITLE_PRIORITY scores the role type, and
+# the two have to agree. A keyword with no tier scores 0 for role type and
+# sinks to the bottom of the list, where it would never be noticed.
 _UNTIERED = [k for k in TITLE_KEYWORDS
              if not any(p in k or k in p
                         for tier, _ in TITLE_PRIORITY for p in tier)]
@@ -317,18 +278,15 @@ assert not _UNTIERED, (
     f"TITLE_KEYWORDS entries with no TITLE_PRIORITY tier (they would pass the "
     f"filter and score 0 for role type): {_UNTIERED}")
 
-# "you will mentor others" implies seniority — penalize
+# "will mentor others" implies they want a senior hire
 MENTOR_OTHERS = [
     "mentor other", "mentor junior", "mentor teammates", "mentor the team",
     "mentoring other", "mentor engineers", "raise the bar", "mentor peers",
 ]
 
-# "you will be mentored" — what you actually want.
-# "supported by" and "with guidance" used to be in this list and were removed:
-# they are not boilerplate-adjacent, they ARE boilerplate. "backed and
-# supported by Sequoia" is an investor sentence and appears in a large share of
-# startup JDs, so the phrase was handing out the mentorship bonus for nothing.
-# What is left has to actually name the mentoring relationship.
+# "will be mentored" — the useful direction. Phrases have to name the
+# mentoring relationship; "supported by" and "with guidance" were dropped
+# because they match investor and benefits boilerplate.
 MENTOR_YOU = [
     "mentorship", "you'll be mentored", "learn from experienced",
     "dedicated mentor", "guidance from senior", "coaching",
@@ -340,45 +298,23 @@ STARTUP_SIGNALS = [
     "wear many hats", "0 to 1", "0-to-1", "greenfield",
 ]
 
-# Signals the engineering team is too small to learn from. These used to sit
-# in STARTUP_SIGNALS and earn a bonus, but "founding engineer" / "employee #7"
-# describes exactly the sub-5-engineer team where there is nobody senior to be
-# mentored by — the opposite of what you're looking for.
+# Signals an engineering team too small to learn from. "founding engineer"
+# and "employee #7" describe a team with nobody senior to be mentored by.
 TOO_EARLY_SIGNALS = [
     "founding engineer", "founding team", "first engineer",
     "first engineering hire", "early employee", "employee #",
     "one of our first", "ground floor", "join us early", "pre-seed",
 ]
 
-# Board size thresholds — total roles posted, before filtering.
-# Board size no longer affects the score. It was standing in for company
-# headcount, and measured against 402 live boards it doesn't do that job:
-# the companies with <=5 open roles are netlify, dremio, motive, prisma,
-# gremlin — established firms hiring selectively, not sub-5-engineer teams.
-# The penalty was docking points for a hiring freeze. The aggregate trend is
-# real but weak (8.6% of postings on tiny boards use founding-engineer
-# language vs 1.5% on the largest), and TOO_EARLY_SIGNALS below measures the
-# same thing directly from the posting text. board_size stays in the CSV as
-# something to eyeball; it just doesn't move the ranking.
 # --- scoring weights -------------------------------------------------------
-# These values were set deliberately in a calibration interview and the
-# rationale for each is written up in CLAUDE.md. They are named here rather
-# than inlined into fit_score so that the score is auditable in one place and
-# a recalibration shows up as a one-line diff instead of a change buried in an
-# expression. NO VALUE HERE HAS BEEN CHANGED from the inlined version — this
-# is a move, not a retune.
+# Named here rather than inlined into fit_score so the whole scoring model is
+# auditable in one place. board_size is reported in the CSV but deliberately
+# not scored: it tracks how many roles a company has open, not its size.
 W_NEWGRAD_TITLE = 20        # new-grad language in the title
 W_NEWGRAD_BODY_PER_HIT = 6  # per distinct EXPLICIT_NEWGRAD phrase in the body
 W_NEWGRAD_BODY_CAP = 18
 W_YEARS_UNSTATED = 10       # usually fine, but more ambiguous than a stated 1
-W_YEARS_LOW = 15            # a stated floor of 0 or 1 — they set the level low
-                            # on purpose, which is the best single signal there
-                            # is. "0-2 years" earns this the same as "1 year":
-                            # both say they will take someone with no
-                            # professional experience, and an explicit range
-                            # starting at 0 is if anything the clearer of the
-                            # two. Only a genuinely unstated requirement falls
-                            # back to W_YEARS_UNSTATED.
+W_YEARS_LOW = 15            # stated floor of 0 or 1; "0-2 years" counts here
 W_YEARS_TWO = 6
 W_BAY_AREA = 15
 W_REMOTE = 4
@@ -389,24 +325,17 @@ W_STARTUP = 6
 TOO_EARLY_PENALTY = 8
 LATER_COHORT_PENALTY = 10
 
-# Crunch language is "-5 each", but only up to a point: it is a demerit Blake
-# wants to SEE, not one that buries an otherwise-good posting. The cap used to
-# be an accident — make_row sliced the flag list to [:3] so the CSV column
-# stayed readable, and fit_score happened to score that same truncated list.
-# Display width silently set the penalty ceiling. Both are explicit now, and
-# the CSV records every flag found so the cap can actually be audited.
+# Crunch language is a demerit worth seeing, not one that should bury an
+# otherwise good posting, so the penalty is capped. The CSV still records
+# every flag found.
 CRUNCH_PENALTY_EACH = 5
 CRUNCH_PENALTY_MAX_FLAGS = 3
 
-# Summary buckets. These have NOT been re-decided since board size was removed
-# from scoring, which compressed the distribution (strong 29 -> 21, worth a
-# look 132 -> 91 on the same input). Named here so a recalibration is a
-# one-line change; see the open item in HANDOFF.md.
+# Summary buckets, named so retuning them is a one-line change.
 STRONG_FIT = 60
 WORTH_A_LOOK = 45
 
-# CSV column order. board_size is reported but deliberately NOT scored — see
-# the note above TOO_EARLY_PENALTY and the write-up in CLAUDE.md.
+# CSV column order.
 CSV_FIELDS = ["fit_score", "company", "source", "title", "location",
               "bay_area", "board_size", "years_stated", "good_signals",
               "crunch_flags", "url"]
@@ -440,10 +369,8 @@ def load_seen(path: str) -> dict:
 def atomic_write(path: str, write_fn) -> None:
     """Write via a temp file and rename, so a crash can't truncate the target.
 
-    Both callers need this and only one used to have it: seen_urls.json was
-    protected while the slug files — the hand-curated input, months of Google
-    site: searches, and the only record of which slugs are dead — were
-    rewritten in place with a bare open(path, "w").
+    The slug files matter here: they are hand-curated input and the only
+    record of which slugs are dead.
     """
     tmp = path + ".tmp"
     try:
@@ -464,9 +391,8 @@ def save_seen(path: str, seen: dict) -> None:
 def prune_file(path: str, dead_slugs: Iterable[str]) -> None:
     """Comment out newly-dead slugs, rewriting the file line by line.
 
-    This used to rebuild the file from load_slugs(), which strips comments —
-    so every previously pruned "# slug  (404)" line was silently deleted on
-    the next --prune run, losing exactly the record the flag exists to keep.
+    Rewritten line by line rather than rebuilt from load_slugs(), which
+    strips comments and would drop every previous "# slug  (404)" record.
     """
     dead_slugs = set(dead_slugs)
     with open(path, encoding="utf-8") as f:
@@ -484,9 +410,8 @@ def prune_file(path: str, dead_slugs: Iterable[str]) -> None:
 
 
 def strip_html(text: Optional[str]) -> str:
-    # Unescape first, then strip tags. Greenhouse serves its job body
-    # HTML-escaped (&lt;p&gt;), so stripping first left literal "<p>" and
-    # "<span class=...>" sitting in the text the keyword matching reads.
+    # Unescape before stripping tags: Greenhouse serves its body
+    # HTML-escaped, so the reverse order leaves literal "<p>" in the text.
     if not text:
         return ""
     text = html.unescape(text)
@@ -504,20 +429,10 @@ def title_matches(title: str) -> bool:
 def years_required(body: str) -> tuple:
     """(floor, ceiling) years-of-experience the posting asks for.
 
-    A range carries two different facts and they are used for two different
-    things, so both are returned:
-
-      - the CEILING is what the filter screens on. For "1-3 years" that is 3,
-        because a 1-3 year req is a 3-year req you might squeak into. The old
-        code screened on the bottom of the range, so those roles survived
-        MAX_YEARS and then collected the largest years bonus in fit_score.
-
-      - the FLOOR is what the score should reward. "0-2 years" means they are
-        open to someone with none, which is a stronger new-grad signal than
-        "1 year" — but scoring it on the ceiling ranked it as if they had
-        demanded two full years, 9 points below an explicit "1 year". That
-        inverted the ordering at the top of the list, which is the only part
-        of the list that gets read.
+    A range carries two facts, used for two different things. The filter
+    screens on the ceiling, so "1-3 years" is a 3-year req. The score rewards
+    the floor, so "0-2 years" reads as openness to someone with no experience
+    rather than as a demand for two years.
 
     Both are 0 when the posting states nothing.
     """
@@ -537,23 +452,15 @@ def years_required(body: str) -> tuple:
 
 
 def max_years_required(body: str) -> int:
-    """Ceiling only — what the MAX_YEARS filter screens on.
-
-    Kept as a named function because it is the filter's contract and reads
-    better at the call site than years_required(body)[1].
-    """
+    """Ceiling only — what the MAX_YEARS filter screens on."""
     return years_required(body)[1]
 
 
 def find_flags(body: str, flags: Sequence[str]) -> list:
     """Phrases from `flags` present in `body`, without double-counting.
 
-    A shorter phrase that is contained in a longer matched phrase is dropped:
-    "new graduate" in a body also contains "new grad", and counting both meant
-    one phrase scored twice (12 of the 18-point body cap) and burned two of the
-    four good_signals display slots. This is the same class of mistake as the
-    bare " i" substring bug — an unvalidated substring relationship inside a
-    keyword list — so it is fixed once, here, for every list that uses it.
+    A shorter phrase contained in a longer match is dropped, so a body saying
+    "new graduate" scores once rather than also matching "new grad".
 
     Order follows the caller's list so the columns stay stable.
     """
@@ -567,10 +474,8 @@ def is_bay_area(location: Optional[str]) -> bool:
     return any(c in (location or "").lower() for c in BAY_AREA)
 
 
-# Remote postings that name only a non-US region. A remote role is worth
-# keeping because you can take it from the Bay and still get the in-office
-# benefit; a remote-Poland role can't be that, so it's dropped with the rest
-# of the non-Bay listings.
+# Remote postings that name only a non-US region. Remote-from-the-Bay is
+# worth keeping; remote-from-Poland is not, so it goes with the non-Bay rest.
 REMOTE_NON_US = re.compile(
     r"emea|europe|united kingdom|\buk\b|london|india|apac|canada|germany"
     r"|france|spain|poland|portugal|brazil|australia|singapore|japan"
@@ -598,14 +503,13 @@ def location_ok(location: Optional[str]) -> bool:
 
 def fit_score(title: str, location: str, body: str, years: tuple,
               crunch: Sequence[str], grad_date: Optional[tuple] = None) -> int:
-    """0-100ish. Higher = closer to what Blake actually wants.
+    """0-100ish. Higher is a closer match to the target profile.
 
     `years` is the (floor, ceiling) pair from years_required. Both are needed:
-    the floor says how low they set the bar, and the ceiling is the only way to
-    tell a genuinely unstated requirement (0, 0) from an explicit "0-2 years"
-    (0, 2). The filter has already screened on the ceiling.
+    the ceiling is the only way to tell an unstated requirement (0, 0) from an
+    explicit "0-2 years" (0, 2).
 
-    `crunch` is the full list of matched flags — the penalty cap is applied
+    `crunch` is the full list of matched flags; the penalty cap is applied
     here, not by the caller.
     """
     years_floor, years_ceiling = years
@@ -640,11 +544,8 @@ def fit_score(title: str, location: str, body: str, years: tuple,
         score += W_REMOTE
 
     # --- mentorship ---
-    # Deliberately light. Having a senior engineer to learn from matters a
-    # lot, but "mentorship" and "coaching" turn up in boilerplate benefits
-    # copy, so the phrase match is weak evidence that it's real. The
-    # TOO_EARLY_SIGNALS penalty below is the load-bearing test for "is there
-    # anyone here to learn from"; this is only corroboration.
+    # Weighted lightly: "mentorship" and "coaching" show up in boilerplate
+    # benefits copy, so the phrase match is weak evidence on its own.
     if any(k in low for k in MENTOR_YOU):
         score += W_MENTOR_YOU
     if any(k in low for k in MENTOR_OTHERS):
@@ -666,13 +567,11 @@ def fit_score(title: str, location: str, body: str, years: tuple,
 
 
 def dedup_key(company: str, title: str, location: str) -> tuple:
-    """Identifies the same JD listed twice.
+    """Identifies the same posting listed twice.
 
-    30 slugs currently sit in two slug files, so a company listed on both
-    Greenhouse and Ashby returns the same posting under two different URLs
-    that the run-to-run URL diff cannot collapse. Keyed on company + title +
-    location rather than company alone, so a company with four genuinely
-    different open roles still produces four rows.
+    A company on two platforms returns the same role under two URLs, which a
+    URL diff cannot collapse. Keyed on company + title + location rather than
+    company alone, so genuinely different roles keep their own rows.
     """
     def norm(s):                         # PEP 8 E731: def, not an assigned lambda
         return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
@@ -690,9 +589,8 @@ def make_row(company: str, source: str, title: str, location: str, url: str,
         return None
     if not location_ok(location):
         return None
-    # Every flag, not a display-truncated subset: fit_score applies its own
-    # cap, and the column is Blake's culture screen — truncating it destroyed
-    # the only evidence that would show whether the cap was ever binding.
+    # Every flag, not a truncated subset: fit_score applies its own cap, and
+    # truncating here would hide whether that cap was binding.
     crunch = find_flags(body, CRUNCH_FLAGS)
     return {
         "fit_score": fit_score(title, location, body,
@@ -783,10 +681,9 @@ RIPPLING_BOARD = "https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs
 def _rippling_body(description) -> str:
     """Rippling splits the posting into {"company": html, "role": html}.
 
-    Both halves are kept: "role" carries the requirements the years and
-    new-grad matching need, and "company" carries the culture copy that
-    CRUNCH_FLAGS is looking for. Falls back to treating it as a plain string
-    in case the shape changes.
+    Both halves are kept: "role" carries the requirements, "company" carries
+    the culture copy CRUNCH_FLAGS looks for. Falls back to a plain string if
+    the shape changes.
     """
     if isinstance(description, dict):
         return strip_html(" ".join(str(v) for v in description.values()))
@@ -794,19 +691,15 @@ def _rippling_body(description) -> str:
 
 
 def fetch_rippling(slug: str, session: requests.Session) -> list:
-    """Rippling is the only source that needs two requests per posting.
+    """Rippling needs two requests per posting.
 
-    Its board endpoint returns just uuid/name/department/url/workLocation —
-    no body — so the description has to be fetched per job. To keep that from
-    turning one board into hundreds of GETs, the title filter runs against the
-    list first and only matching postings are fetched in full.
+    Its board endpoint returns no description, so the body is fetched per job.
+    The title filter runs against the board listing first so that only
+    matching postings cost a second request.
 
-    The location filter deliberately does NOT run against the list, even
-    though a workLocation is present there: the list carries a single location
-    while the detail carries all of them. A role listed as
-    ["Pittsburgh, PA", "Cleveland, OH"] shows only Pittsburgh in the list, so
-    pre-filtering on it would silently drop multi-city roles that include the
-    Bay Area.
+    The location filter is NOT applied to the listing: it carries one location
+    where the detail carries all of them, so a role listed in both Pittsburgh
+    and the Bay Area would be dropped on the listing's single value.
     """
     r = session.get(RIPPLING_BOARD.format(slug=slug), timeout=25)
     r.raise_for_status()
@@ -821,10 +714,8 @@ def fetch_rippling(slug: str, session: requests.Session) -> list:
         d = session.get(detail_url, timeout=25)
         if d.status_code == 404:
             continue                     # posting pulled between the two calls
-        # any other failure is raised so scrape_one reports the board as
-        # failed. A silently-skipped posting is indistinguishable from "no
-        # matching roles", which is the exact failure this project already
-        # fixed once in scrape_one.
+        # anything else is raised so scrape_one reports the board as failed:
+        # a silently skipped posting looks like "no matching roles"
         d.raise_for_status()
         detail = d.json()
         locations = detail.get("workLocations") or []
@@ -846,21 +737,14 @@ FETCHERS = {"greenhouse": fetch_greenhouse,
 
 
 def build_session(workers: int) -> requests.Session:
-    """A session sized for the pool, with real backoff on transient failures.
+    """A session sized for the worker pool, with backoff on transient errors.
 
-    Two things this fixes:
+    The default urllib3 pool holds 10 connections, so running more workers
+    than that churns connections. Retry adds exponential backoff and honours
+    Retry-After, which matters for 429s.
 
-      - the default urllib3 connection pool holds 10 connections. Running 12
-        workers against it meant connections were discarded and reopened under
-        load, for no reason other than an unset parameter.
-
-      - retries used to be a bare `for _ in range(2)` with no delay, so a 429
-        (rate limited) was retried instantly. That is the one status code where
-        an immediate retry is guaranteed to be counterproductive. Retry gives
-        exponential backoff and honours Retry-After.
-
-    404 is deliberately NOT in status_forcelist: a dead slug is a normal,
-    expected result that scrape_one classifies, not a transient failure.
+    404 is deliberately not in status_forcelist: a dead slug is an expected
+    result that scrape_one classifies, not a transient failure.
     """
     session = requests.Session()
     session.headers["User-Agent"] = "Mozilla/5.0 (job search)"
@@ -883,13 +767,10 @@ def build_session(workers: int) -> requests.Session:
 def scrape_one(source: str, slug: str, session: requests.Session) -> tuple:
     """Fetch one board and classify the outcome.
 
-    Transient retries happen inside the session adapter (see build_session),
-    so this is a single logical attempt.
-
-    A board that times out returns no rows, which is indistinguishable from a
-    board with no matching roles — so failures are counted and reported rather
-    than swallowed. That matters for the run-to-run diff: a company that fails
-    one week and succeeds the next looks like a pile of brand-new postings.
+    Transient retries happen in the session adapter, so this is one logical
+    attempt. Failures are reported rather than swallowed: a board that times
+    out returns no rows, which otherwise looks identical to a board with no
+    matching roles and would resurface as brand new next run.
     """
     try:
         return source, slug, FETCHERS[source](slug, session), "ok"
@@ -899,16 +780,16 @@ def scrape_one(source: str, slug: str, session: requests.Session) -> tuple:
             return source, slug, [], "404"
         return source, slug, [], f"http{code}"
     except Exception as e:
-        # keep the message, not just the class: when a board fails it
-        # suppresses the seen-store update and invalidates the diff, which is
-        # exactly when you want to know *why* rather than just "ConnectionError"
+        # keep the message, not just the class name — a failed board
+        # suppresses the seen-store update, so the reason matters
         return source, slug, [], f"{type(e).__name__}: {e}"
 
 
 def parse_args(argv=None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
-        description="Rank open new-grad/early-career engineering roles from "
-                    "Greenhouse, Ashby and Lever public job-board APIs.")
+        description="Rank open new-grad and early-career engineering roles "
+                    "from public Greenhouse, Ashby, Lever and Rippling "
+                    "job-board APIs.")
     ap.add_argument("-o", "--output", default="jobs.csv")
     ap.add_argument("--workers", type=int, default=12)
     ap.add_argument("--prune", action="store_true",
@@ -921,8 +802,8 @@ def parse_args(argv=None) -> argparse.Namespace:
                     help="update the seen store even if boards failed; this "
                          "poisons the next run's diff, so prefer re-running")
     ap.add_argument("--grad-date", metavar="YYYY-MM",
-                    help=f"your graduation, for spotting reqs aimed at a later "
-                         f"cohort (default "
+                    help="target graduation month, for spotting reqs aimed "
+                         "at a later cohort (default "
                          f"{GRAD_DATE[0]}-{GRAD_DATE[1]:02d})")
     ap.add_argument("--verbose", action="store_true",
                     help="print full error detail for every failed board")
