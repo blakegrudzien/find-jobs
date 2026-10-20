@@ -32,3 +32,24 @@ betmakers
 energy-strategies-llc
 get-engaged
 veryable-careers
+
+# added 2026-10-12 from HN hiring threads
+boom-supersonic
+etc
+flyover-las-vegas
+mondrio
+
+# added 2026-10-13 from HN hiring threads
+bonsairoboticsmain
+cdata-software
+d-wave-quantum
+glasshouse
+join-the-hipcamp-team
+joinroot
+kai-cyber-inc
+nutrient
+obie
+rentspree
+thriveglobal
+vividly
+vouch-inc

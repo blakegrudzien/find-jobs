@@ -146,6 +146,42 @@ def test_no_location_anywhere_returns_none():
     assert hn.pick_location(f, " | ".join(f)) is None
 
 
+# --- link extraction -----------------------------------------------------
+
+def test_href_is_used_not_the_truncated_display_text():
+    """HN shortens a long link's visible text and appends an ellipsis. Reading
+    the display text yields a URL that looks valid and 404s."""
+    raw = ('<a href="https://news.example/2026/08/25/a-long-article-slug/" '
+           'rel="nofollow">https:&#x2F;&#x2F;news.example&#x2F;2026&#x2F;08'
+           '&#x2F;25&#x2F;a-long-artic...</a>')
+    got = hn.post_url(raw, fj.strip_html(raw))
+    assert got == "https://news.example/2026/08/25/a-long-article-slug/"
+    assert "..." not in got and "artic" not in got.rstrip("/")[-9:]
+
+
+def test_a_posting_link_beats_a_homepage_link():
+    raw = ('<a href="https://acme.com">acme.com</a> see '
+           '<a href="https://acme.com/careers">openings</a>')
+    assert hn.post_url(raw, fj.strip_html(raw)) == "https://acme.com/careers"
+
+
+def test_falls_back_to_plain_text_when_there_is_no_anchor():
+    raw = "No anchor here, just https://plain.example/jobs. Apply!"
+    assert hn.post_url(raw, raw) == "https://plain.example/jobs"
+
+
+def test_no_link_at_all_yields_empty_string():
+    assert hn.post_url("Nothing linked", "Nothing linked") == ""
+    assert hn.post_url(None, "") == ""
+
+
+def test_row_url_comes_from_the_href():
+    text = ('Acme | Backend Engineer | San Francisco | 1 year of experience '
+            '<a href="https://acme.example/careers/backend">apply here</a>')
+    row = hn.make_row(comment(text), THREAD)
+    assert row["url"] == "https://acme.example/careers/backend"
+
+
 # --- row construction: the filters are find_jobs.py's ---------------------
 
 def test_a_bay_area_new_grad_post_becomes_a_row():
@@ -240,6 +276,20 @@ def test_csv_fields_cover_every_row_key():
     text = "Acme | Backend Engineer | San Francisco | 1 year of experience"
     row = hn.make_row(comment(text), THREAD)
     assert set(row) == set(hn.CSV_FIELDS)
+
+
+def test_written_urls_are_quoted_so_they_stay_clickable(tmp_path):
+    """url and comment_url are adjacent columns. Unquoted, the raw line reads
+    ",https://a,https://b" and a link detector treats the comma as part of the
+    first URL, gluing both into one unclickable string."""
+    out = tmp_path / "hn.csv"
+    hn.write_csv(str(out), [dict.fromkeys(hn.CSV_FIELDS, "") | {
+        "url": "https://acme.example/careers",
+        "comment_url": "https://news.ycombinator.com/item?id=1",
+    }])
+    raw = out.read_text()
+    assert '"https://acme.example/careers","https://news.ycombinator.com/item?id=1"' in raw
+    assert ",https://" not in raw, "a bare URL follows a comma"
 
 
 def test_hn_csv_keeps_the_contact_column_find_jobs_lacks():

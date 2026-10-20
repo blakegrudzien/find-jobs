@@ -29,6 +29,7 @@ Usage:
 import argparse
 import csv
 import datetime
+import html
 import os
 import re
 import sys
@@ -58,6 +59,15 @@ COMPANY_NOISE = re.compile(
     re.IGNORECASE)
 
 URL_IN_TEXT = re.compile(r"https?://[^\s<>\"']+")
+
+# HN renders a long link as <a href="FULL-URL">truncated-display-text...</a>,
+# so the visible text is not the URL. Always read the href.
+HREF = re.compile(r'<a\s[^>]*href="([^"]+)"', re.IGNORECASE)
+
+# Prefer a link that points at a posting over a company homepage.
+POSTING_URL = re.compile(
+    r"job|career|hiring|greenhouse|ashby|lever|rippling|workable|boards",
+    re.IGNORECASE)
 
 # Many posts put the link inside the company field: "Acme ( https://acme.com )".
 COMPANY_URL_TAIL = re.compile(r"\s*\(?\s*https?://\S*.*$", re.IGNORECASE)
@@ -198,6 +208,19 @@ def pick_location(fields: list, text: str):
     return None
 
 
+def post_url(raw, text: str) -> str:
+    """The best link in a comment, or "" if it has none."""
+    hrefs = HREF.findall(html.unescape(raw or ""))
+    if not hrefs:
+        # no anchor tag: scan the plain text instead, trimming the punctuation
+        # a URL picks up at the end of a sentence
+        hrefs = [u.rstrip(".,;:)]") for u in URL_IN_TEXT.findall(text)]
+    for u in hrefs:
+        if POSTING_URL.search(u):
+            return u
+    return hrefs[0] if hrefs else ""
+
+
 def make_row(comment: dict, thread: dict, all_locations: bool = False):
     text = fj.strip_html(comment.get("text"))
     if not text:
@@ -220,8 +243,7 @@ def make_row(comment: dict, thread: dict, all_locations: bool = False):
         return None
 
     crunch = fj.find_flags(text, fj.CRUNCH_FLAGS)
-    # a URL at the end of a sentence picks up the period
-    urls = [u.rstrip(".,;:)]") for u in URL_IN_TEXT.findall(text)]
+    url = post_url(comment.get("text"), text)
     author = comment.get("author") or ""
     cid = comment.get("id")
     return {
@@ -237,14 +259,17 @@ def make_row(comment: dict, thread: dict, all_locations: bool = False):
         "crunch_flags": ", ".join(crunch),
         "hn_author": author,             # the contact — why this source exists
         "thread": thread.get("created", ""),
-        "url": urls[0] if urls else "",
+        "url": url,
         "comment_url": f"https://news.ycombinator.com/item?id={cid}",
     }
 
 
 def write_csv(path: str, rows) -> None:
     def write(f):
-        w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+        # QUOTE_ALL because url and comment_url sit next to each other: with
+        # bare fields the row reads ",https://a,https://b" and an editor's link
+        # detector swallows the comma, gluing the two into one dead link.
+        w = csv.DictWriter(f, fieldnames=CSV_FIELDS, quoting=csv.QUOTE_ALL)
         w.writeheader()
         w.writerows(rows)
 

@@ -149,3 +149,17 @@ dreamgames
 getmidas
 prosper
 triallibrary
+
+# added 2026-10-12 from HN hiring threads
+atomcomputing
+curai
+eleostech
+findigs
+gausslabs
+rai
+shieldai
+
+# added 2026-10-13 from HN hiring threads
+latch
+paytm
+people-ai
